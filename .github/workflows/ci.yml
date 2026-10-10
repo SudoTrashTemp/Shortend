@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Build (release)
+        run: cargo build --workspace --release
+
+  # Linux is the primary QA platform: real filesystems on loop devices, simulated hot-unplug
+  # (device-mapper error target, lazy unmount), full disks, read-only remounts, permissions.
+  linux-devices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install filesystem tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y exfatprogs exfat-fuse dosfstools ntfs-3g dmsetup
+          sudo modprobe -a loop dm_mod || true
+          sudo modprobe -a exfat vfat ntfs3 || true
+      - name: Build tests
+        run: cargo test -p shortend-cli --test linux_devices --no-run
+      - name: Device tests (root)
+        run: |
+          sudo env "PATH=$PATH" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
+            "RUSTFLAGS=$RUSTFLAGS" CARGO_TERM_COLOR=always \
+            SHORTEND_PRIVILEGED_TESTS=1 SHORTEND_REQUIRE_ALL_FS=1 \
+            cargo test -p shortend-cli --test linux_devices -- --test-threads=1 --nocapture
+      - name: Restore target ownership for the cache
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" target
+
+  # Memory stays bounded however large the file (PLAN.md M1 done criteria).
+  memory-bound:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Peak RSS for a 4 GB file to 2 destinations
+        env:
+          SHORTEND_RSS_TEST_GB: "4"
+        run: cargo test --release -p shortend-cli peak_rss -- --ignored --nocapture
