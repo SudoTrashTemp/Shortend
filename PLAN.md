@@ -452,16 +452,15 @@ Resume (`shortend resume <job-id>`, also after `kill -9` or power loss):
    identity). For the source, also confirm the file list, sizes and mtimes match the snapshot —
    a different card with the same name is refused.
 2. A truncated final journal line is ignored.
-3. **Skip rule.** A file is skipped for a destination (`AlreadyVerified`) only when it was
-   fully copied *and* verified: the journal (the job's manifest in M1; from M2 also the
-   destination's MHL) holds a `commit` record whose verified digests equal the recorded source
-   digests, the source file still matches the scan snapshot, and the final file exists with
-   the recorded size and mtime (mtime compared within the destination filesystem's timestamp
-   granularity, 2 s for FAT). A final file without a matching `commit` record (crash between
-   rename and journal write) is re-hashed and compared with the journaled source digests:
-   match → recorded as committed and skipped; no match or no source record → removed (it can
-   only be ours: the target folder belongs to this job) and re-copied. Everything else is
-   redone from byte 0. Stale `.part` files are deleted.
+3. **Skip rule.** A file is not re-copied to a destination (`AlreadyVerified`) only when it is
+   *re-verified now*: the final file exists, is re-read from the device and hashed, its
+   checksums equal the journaled source checksums, its size and mtime match (mtime within the
+   destination filesystem's granularity, 2 s for FAT), and the source still matches the scan
+   snapshot. A journal `commit` record alone is never trusted — the file may have been damaged
+   after it was verified. Anything that fails re-verification, or has no journaled source
+   checksum, is removed (it can only be ours: the target folder belongs to this job) and
+   re-copied. Stale `.part` files are deleted. Cost: resume reads back every file already on
+   the destination once, which is the price of never skipping an unproven copy.
 4. Resume granularity is **per file**, not mid-file: mid-file resume would require persisting
    hasher state (not supported by the hash crates) and re-proving the partial bytes, so a
    restarted file is re-read from byte 0 (approved).
@@ -709,10 +708,13 @@ Done when:
   file by file.
 - On resume, volumes are matched by filesystem UUID where known (a reconnected drive often
   gets a new device number) and the recorded device number is refreshed. macOS has no UUID
-  yet (device number only) — to add before M4.
+  yet (device number only) — **M4 blocker**, see M4.
+- Resume re-verifies every file already at its final path (added after M1 review: a file
+  corrupted after verification with size and mtime intact must be caught —
+  `resume_catches_corruption_after_verification`).
 - Linux `fuseblk` mounts (ntfs-3g, exfat-fuse) get Windows naming rules.
-- Not in M1: stall detection for a destination whose writes hang in the kernel (cancel still
-  works; joining the hung writer does not) — planned with the GUI's progress view in M4.
+- Not in M1: stall detection for a destination whose writes hang in the kernel — moved to M2
+  (minimal watchdog) after review; the full progress view stays in M4.
 - `shortend-core` has a test-only `fault-injection` feature (`SHORTEND_FAULT=corrupt-dest=N`);
   it is enabled only for tests and is absent from release builds.
 
@@ -723,7 +725,21 @@ streaming readers for both; carry-forward of an existing source history; `shorte
 <dir>`; PDF report without thumbnails (logo, production fields, speeds, manifest table);
 vendored XSDs; preflight checks for algorithm/manifest compatibility.
 
+Also in M2 (from M1 review): a minimal **stall watchdog**. `JobSettings.stall_timeout`
+(default 60 s, configurable, CLI `--stall-timeout`): a destination with zero bytes written or
+verified for that long while it has work is marked `Failure::DestinationStalled`, its files are
+reported failed, and the job finishes with the other destinations. The hung writer thread is
+detached rather than joined (a thread blocked in the kernel cannot be killed); its `.part` file
+is cleaned up on resume. The full progress view stays in M4.
+
+Before any M2 feature work: push to GitHub, get CI green on Linux/macOS/Windows including the
+device-mapper unplug tests, and fix what it finds.
+
 Done when:
+- [ ] CI green on all three platforms and the privileged Linux job (carried from M1).
+- [ ] Stall watchdog: a test with a destination whose writes block (FUSE or dm `delay`/
+      suspended target) marks it `DestinationStalled` within the timeout, the other
+      destination completes, and the job reports it; exit code 1.
 - [ ] Every MHL produced by the test suite passes `xmllint --schema` against the vendored XSD.
 - [ ] `ascmhl verify` accepts ShortEnd v2 output; ShortEnd `verify` accepts reference-tool
       golden fixtures (v2 and v1.1) and detects a tampered file.
@@ -751,7 +767,14 @@ state dir, open reports, Resume), **Presets** (edit/save). The engine runs on a 
 the GUI only consumes `Event`s and calls the public API — no GUI types or crates in
 `shortend-core`.
 
+**Blocker carried from M1 — must be fixed before M4 starts:** on macOS, volumes are identified
+by device number only (`fs_uuid` is `None`), so a drive that is unplugged and reconnected under
+a new device number is refused on resume. Read the APFS/HFS+/exFAT volume UUID (via
+`getattrlist(ATTR_VOL_UUID)` or `statfs.f_fsid` + DiskArbitration) and match on it as Linux
+does.
+
 Done when:
+- [ ] macOS volume UUID implemented and covered by a test (blocker above).
 - [ ] `shortend-core` has no dependency on any GUI crate (checked in CI with `cargo tree`).
 - [ ] A full offload, cancel, and resume can be done from the GUI on Linux (X11 and Wayland),
       macOS and Windows (manual checklist recorded in `docs/qa.md`).

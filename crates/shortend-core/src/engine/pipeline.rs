@@ -367,26 +367,27 @@ fn reconcile(ctx: &Ctx, entry: &FileEntry, o: &mut FileOutcome, replay: &Replay)
         }
         let final_path = entry.rel.to_path(&dest.target);
         let committed = replay.commits.get(&(entry.rel.clone(), d.dest));
-        if let (Some(c), Some(s)) = (committed, &src)
-            && c == s
-            && final_matches(&final_path, entry, dest)
-        {
-            d.status = FileStatus::AlreadyVerified;
-            d.verified = Some(c.clone());
-            continue;
-        }
         match std::fs::symlink_metadata(&final_path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Ok(m) if m.is_file() && src.is_some() => {
-                // Renamed into place but the commit record was lost: prove it by re-hashing.
+                // A journal record is never trusted on its own: the file could have been
+                // damaged after it was verified. Re-read it from the device and compare with
+                // the journaled source checksums; anything that doesn't match is re-copied.
                 let s = src.as_ref().expect("checked");
-                match hash_path(&final_path, hashes, ctx.cancel, None) {
+                match hash_path(
+                    &final_path,
+                    hashes,
+                    ctx.cancel,
+                    Some(&ctx.verified_bytes[d.dest.index()]),
+                ) {
                     Ok(v) if &v == s && final_matches(&final_path, entry, dest) => {
-                        ctx.record(&Record::Commit {
-                            rel: entry.rel.clone(),
-                            dest: d.dest,
-                            digests: v.clone(),
-                        });
+                        if committed != Some(&v) {
+                            ctx.record(&Record::Commit {
+                                rel: entry.rel.clone(),
+                                dest: d.dest,
+                                digests: v.clone(),
+                            });
+                        }
                         d.status = FileStatus::AlreadyVerified;
                         d.verified = Some(v);
                     }

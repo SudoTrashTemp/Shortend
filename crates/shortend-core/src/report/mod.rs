@@ -120,7 +120,7 @@ pub fn human_rate(bytes: u64, d: Duration) -> String {
 pub(crate) fn status_word(s: &FileStatus) -> &'static str {
     match s {
         FileStatus::Verified => "verified",
-        FileStatus::AlreadyVerified => "verified_earlier",
+        FileStatus::AlreadyVerified => "reverified_on_resume",
         FileStatus::Failed(_) => "failed",
         FileStatus::Pending => "not_copied",
     }

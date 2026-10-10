@@ -482,3 +482,49 @@ fn destination_disappearing_mid_job_is_isolated_and_resumable() {
     assert_eq!(tree_state(&d2.join("CARD"), SKIP), tree_state(&src, &[]));
     assert_no_staging(&d2);
 }
+
+/// A destination file damaged *after* it was verified — same size, same mtime, journal still
+/// says "committed" — must be caught on resume and re-copied, never skipped.
+#[test]
+fn resume_catches_corruption_after_verification() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("CARD");
+    make_card(&src);
+    let d = tmp.path().join("out");
+    std::fs::create_dir(&d).unwrap();
+    let (rep, _) = run(spec(&src, &[&d]));
+    assert_eq!(rep.state, JobState::Completed);
+
+    // Silent bit rot: flip one byte in the middle, keep size and mtime.
+    let victim = d.join("CARD/CLIP/A001C001_240101_R1AB.mxf");
+    let meta = std::fs::metadata(&victim).unwrap();
+    let mut bytes = std::fs::read(&victim).unwrap();
+    let mid = bytes.len() / 2;
+    bytes[mid] ^= 0x01;
+    std::fs::write(&victim, &bytes).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&victim)
+        .unwrap()
+        .set_modified(meta.modified().unwrap())
+        .unwrap();
+    assert_eq!(std::fs::metadata(&victim).unwrap().len(), meta.len());
+
+    let (rep, _) = resume(&rep.job.id.to_string());
+    let rep = rep.unwrap();
+    assert_eq!(rep.state, JobState::Completed);
+    let status = rep
+        .outcomes
+        .iter()
+        .find(|o| o.entry.rel.as_str() == "CLIP/A001C001_240101_R1AB.mxf")
+        .unwrap()
+        .dests[0]
+        .status
+        .clone();
+    assert_eq!(
+        status,
+        FileStatus::Verified,
+        "corrupted file must be re-copied, not skipped"
+    );
+    assert_eq!(tree_state(&d.join("CARD"), SKIP), tree_state(&src, &[]));
+}

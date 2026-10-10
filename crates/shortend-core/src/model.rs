@@ -260,7 +260,8 @@ pub enum FileStatus {
     /// Not attempted (job cancelled or aborted first).
     Pending,
     Verified,
-    /// Verified in an earlier run of this job (resume).
+    /// Copied in an earlier run of this job and re-verified against the source checksums
+    /// when resuming.
     AlreadyVerified,
     Failed(Failure),
 }

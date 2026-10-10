@@ -209,7 +209,7 @@ fn execute(
                 already_verified, ..
             } if already_verified > 0 => {
                 progress.line(&format!(
-                    "{already_verified} files already verified in an earlier run; skipping them"
+                    "{already_verified} files from an earlier run re-verified against the source checksums; not re-copied"
                 ));
             }
             Event::Started { .. } => {}
