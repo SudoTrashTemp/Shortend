@@ -29,6 +29,7 @@ impl Env {
     fn cmd(&self) -> Command {
         let mut c = bin();
         c.env("SHORTEND_STATE_DIR", self.path("state"))
+            .env("SHORTEND_CONFIG_DIR", self.path("config"))
             .env_remove("SHORTEND_FAULT");
         c
     }
@@ -594,4 +595,241 @@ fn peak_rss_is_bounded_for_huge_files() {
     eprintln!("{msg}");
     assert!(peak_kb > 0, "never sampled");
     assert!(peak_kb < 100 * 1024, "peak RSS {peak_kb} kB exceeds 100 MB");
+}
+
+fn stdout(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+/// A ShotPut Pro-style preset file (`{camrol}`, several checksums, both manifests) drives a
+/// copy; flags override it; `{seq}` counts up across runs on both destinations.
+#[test]
+fn preset_file_drives_a_copy_with_overrides_and_multi_hash() {
+    let env = Env::new();
+    env.mkdirs(&["raid", "shuttle"]);
+    for card in ["A001", "A002"] {
+        write(
+            &env.path(&format!("{card}/CLIP/C001.mov")),
+            &noise(200_000, 1),
+        );
+        write(
+            &env.path(&format!("{card}/CLIP/C002.mov")),
+            &noise(90_000, 2),
+        );
+    }
+    let preset = env.path("show.toml");
+    std::fs::write(
+        &preset,
+        format!(
+            r#"format_version = 1
+name = "Big Show"
+[naming]
+folder = "{{show}}/D{{day}}/{{camrol}}_{{seq:3}}"
+[settings]
+hashes = ["xxh64", "md5", "sha1"]
+[reports]
+mhl = ["v2", "v1.1"]
+pdf = false
+[[destinations]]
+label = "RAID"
+root = '{}'
+[[destinations]]
+label = "Shuttle"
+root = '{}'
+[production]
+show = "Big Show"
+day = "01"
+camroll = "X999"
+"#,
+            env.path("raid").display(),
+            env.path("shuttle").display()
+        ),
+    )
+    .unwrap();
+
+    for (i, card) in ["A001", "A002"].iter().enumerate() {
+        let o = env
+            .cmd()
+            .args(["copy", "-s"])
+            .arg(env.path(card))
+            .arg("--preset")
+            .arg(&preset)
+            .args(["--camroll", "A001", "--day", "07"])
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+        let folder = format!("Big Show/D07/A001_{:03}", i + 1);
+        for d in ["raid", "shuttle"] {
+            let target = env.path(d).join(&folder);
+            assert_eq!(
+                tree(&target.join("CLIP")),
+                tree(&env.path(card).join("CLIP")),
+                "{d}"
+            );
+            let csv = std::fs::read_dir(target.join("_ShortEnd"))
+                .unwrap()
+                .flatten()
+                .find(|e| e.path().extension().is_some_and(|x| x == "csv"))
+                .map(|e| std::fs::read_to_string(e.path()).unwrap())
+                .unwrap();
+            let header = csv.lines().next().unwrap();
+            assert!(
+                header.contains("source_xxh64,source_md5,source_sha1"),
+                "{header}"
+            );
+            assert!(
+                !target
+                    .join("_ShortEnd")
+                    .read_dir()
+                    .unwrap()
+                    .flatten()
+                    .any(|e| e.path().extension().is_some_and(|x| x == "pdf")),
+                "pdf = false"
+            );
+            let generation = std::fs::read_dir(target.join("ascmhl"))
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| p.to_string_lossy().ends_with(".mhl"))
+                .unwrap();
+            let xml = std::fs::read_to_string(generation).unwrap();
+            for tag in ["<md5 ", "<sha1 ", "<xxh64 "] {
+                assert!(xml.contains(tag), "{tag} in ASC MHL");
+            }
+            let v11 = std::fs::read_dir(&target)
+                .unwrap()
+                .flatten()
+                .find(|e| e.path().extension().is_some_and(|x| x == "mhl"))
+                .map(|e| std::fs::read_to_string(e.path()).unwrap())
+                .unwrap();
+            assert!(v11.contains("<md5>") && v11.contains("<sha1>"), "{v11}");
+        }
+        assert!(stdout(&o).contains("Preset  Big Show"), "{}", ok(&o));
+    }
+
+    // An empty token value refuses the job (exit 2), naming the flag to give.
+    let o = env
+        .cmd()
+        .args(["copy", "-s"])
+        .arg(env.path("A001"))
+        .arg("-p")
+        .arg(&preset)
+        .args(["--day", ""])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2), "{}", ok(&o));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("{day}"),
+        "{}",
+        ok(&o)
+    );
+}
+
+#[test]
+fn preset_new_show_list_and_rejections() {
+    let env = Env::new();
+    env.mkdirs(&["raid"]);
+    let new = |args: &[&str]| {
+        env.cmd()
+            .args(["preset", "new"])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let raid = env.path("raid");
+    let o = new(&[
+        "bigshow",
+        "--folder",
+        "{show}/{camrol}_{seq:3}",
+        "--hash",
+        "xxh64,md5",
+        "--mhl",
+        "v2,v1.1",
+        "--show",
+        "Big Show",
+        "-d",
+        &format!("RAID={}", raid.display()),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    let saved = env.path("config/presets/bigshow.toml");
+    let text = std::fs::read_to_string(&saved).unwrap();
+    assert!(
+        text.contains("folder = \"{show}/{camroll}_{seq:3}\""),
+        "{text}"
+    );
+    assert!(text.contains("hashes = [\"xxh64\", \"md5\"]"), "{text}");
+    assert!(text.contains("name = \"bigshow\""), "{text}");
+
+    // Not replaced without --force.
+    let o = new(&["bigshow", "--show", "Other"]);
+    assert_eq!(o.status.code(), Some(2), "{}", ok(&o));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("already exists"));
+
+    // Derived preset keeps everything not given.
+    let o = new(&["bigshow-d2", "--from", "bigshow", "--day", "02"]);
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    let o = env
+        .cmd()
+        .args(["preset", "show", "bigshow-d2"])
+        .output()
+        .unwrap();
+    let shown = stdout(&o);
+    assert!(
+        shown.contains("day = \"02\"")
+            && shown.contains("show = \"Big Show\"")
+            && shown.contains("md5"),
+        "{shown}"
+    );
+
+    // A broken preset is listed as invalid and refused by copy.
+    std::fs::write(
+        env.path("config/presets/broken.toml"),
+        "format_version = 1\n[settings]\nhash = \"md5\"\n",
+    )
+    .unwrap();
+    let o = env.cmd().args(["preset", "list"]).output().unwrap();
+    let list = stdout(&o);
+    assert!(
+        list.contains("bigshow ") && list.contains("bigshow-d2"),
+        "{list}"
+    );
+    assert!(
+        list.contains("broken") && list.contains("INVALID") && list.contains("hash"),
+        "{list}"
+    );
+
+    write(&env.path("CARD/a.mov"), &noise(1000, 1));
+    let o = env
+        .cmd()
+        .args(["copy", "-s"])
+        .arg(env.path("CARD"))
+        .args(["-p", "broken"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2), "{}", ok(&o));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("unknown field `hash`"),
+        "{}",
+        ok(&o)
+    );
+    let o = env
+        .cmd()
+        .args(["copy", "-s"])
+        .arg(env.path("CARD"))
+        .args(["-p", "missing"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("no preset named 'missing'"));
+
+    // The saved preset works by name.
+    let o = env
+        .cmd()
+        .args(["copy", "-s"])
+        .arg(env.path("CARD"))
+        .args(["-p", "bigshow", "--camroll", "B002"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    assert!(raid.join("Big Show/B002_001/a.mov").is_file());
 }

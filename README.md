@@ -17,6 +17,12 @@ cargo build --release
     --show "Big Show" --day 01 --camroll A001 --operator "Jane Doe"
 ```
 
+- `shortend copy -s /media/CARD --preset bigshow --day 07 --camroll A001` uses a saved preset
+  (naming template, checksums, reports, destinations, production details); flags override
+  it. `shortend preset new|show|list` manages presets; [examples/bigshow.toml](examples/bigshow.toml)
+  documents every key.
+- Folder templates: `--folder "{show}/{date}_D{day}/{camroll}_{seq:3}"`. `{seq}` is the next
+  free number across all destinations, claimed on every one of them before copying.
 - `shortend resume <job>` continues an interrupted job. Files already copied are checked
   again, and only files that are missing or don't match are copied.
 - `shortend jobs` lists jobs and their state.
@@ -27,7 +33,8 @@ Exit codes: `0` means every file was verified on every destination. `1` means th
 finished with failures, which are named in the summary and in the reports. `2` means the job
 was refused before it started, and nothing was written.
 
-Checksums: xxh64 (the default), xxh3, xxh128, md5, sha1, sha256 and c4. Manifests: ASC MHL v2
+Checksums: xxh64 (the default), xxh3, xxh128, md5, sha1, sha256 and c4; several at once
+(`--hash xxh64,md5`) are computed in one read of the card. Manifests: ASC MHL v2
 (the default), MHL v1.1, both (`--mhl v2,v1.1`) or none.
 
 ## Filesystem support

@@ -9,11 +9,13 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
+use shortend_core::naming::Template;
+use shortend_core::preset::{self, PdfSetting, Preset, PresetDestination};
 use shortend_core::report::mhl::{self, MhlVersion};
 use shortend_core::report::{human_bytes, human_duration, human_rate};
 use shortend_core::{
-    CancelToken, Error, Event, FileStatus, HashAlgorithm, HashList, Job, JobReport, JobSettings,
-    JobSpec, JobState, PdfOptions, ProductionInfo, ReportOptions,
+    CancelToken, Error, Event, FileStatus, HashAlgorithm, HashList, Job, JobReport, JobState,
+    PdfOptions, ProductionInfo,
 };
 
 const EXIT_FAILED: u8 = 1;
@@ -49,6 +51,12 @@ enum Cmd {
         /// The offload folder (the one containing `ascmhl/` or the `.mhl` file).
         dir: PathBuf,
     },
+    /// Create, show and list presets: shareable TOML files with naming, checksums, reports,
+    /// destinations and production details.
+    Preset {
+        #[command(subcommand)]
+        cmd: Box<PresetCmd>,
+    },
 }
 
 #[derive(Args)]
@@ -56,49 +64,129 @@ struct CopyArgs {
     /// Card or folder to offload. It is only ever read.
     #[arg(long, short)]
     source: PathBuf,
+    /// Preset file, or the name of a saved preset (see `shortend preset list`). Flags override it.
+    #[arg(long, short)]
+    preset: Option<String>,
+    #[command(flatten)]
+    job: JobArgs,
+}
+
+/// Everything a preset can hold. Flags that are not given leave the preset's (or the default)
+/// value alone.
+#[derive(Args)]
+struct JobArgs {
     /// Destination root, optionally labelled: `--dest RAID=/mnt/raid`. Repeat for each copy.
-    #[arg(
-        long = "dest",
-        short = 'd',
-        required = true,
-        value_name = "[LABEL=]DIR"
-    )]
+    /// Replaces the preset's destinations.
+    #[arg(long = "dest", short = 'd', value_name = "[LABEL=]DIR")]
     dests: Vec<String>,
-    /// Folder created under every destination root. Defaults to the source folder's name.
-    #[arg(long)]
+    /// Folder template created under every destination root, e.g.
+    /// `{show}/{date}_D{day}/{camroll}_{seq:3}`. Defaults to the source folder's name.
+    /// Tokens: {date[:fmt]} {time[:fmt]} {show} {episode} {day} {card} {camroll} {seq[:width]}.
+    #[arg(long, value_name = "TEMPLATE")]
     folder: Option<String>,
-    /// Checksum algorithm: xxh64, xxh3, xxh128, md5, sha1, sha256, c4.
-    #[arg(long, default_value = "xxh64")]
-    hash: HashAlgorithm,
+    /// Checksum algorithm(s): xxh64 (default), xxh3, xxh128, md5, sha1, sha256, c4. Several,
+    /// comma-separated (`xxh64,md5`), are computed in the same read pass; the first is primary.
+    #[arg(long, value_name = "ALGO[,ALGO…]", value_parser = parse_hashes)]
+    hash: Option<HashList>,
     /// After copying, read the source again (bypassing the cache) and compare checksums.
     #[arg(long)]
     reread_source: bool,
-    /// Files copied at the same time.
-    #[arg(long, default_value = "2")]
-    parallel: NonZeroU8,
+    /// Files copied at the same time [default: 2].
+    #[arg(long)]
+    parallel: Option<NonZeroU8>,
     /// Don't write the CSV report.
     #[arg(long)]
     no_csv: bool,
     /// Don't write the TXT report.
     #[arg(long)]
     no_txt: bool,
-    /// Manifests written into every destination: v2 (ASC MHL), v1.1, both (v2,v1.1), or none.
-    #[arg(long, default_value = "v2", value_name = "v2|v1.1|v2,v1.1|none", value_parser = parse_mhl)]
-    mhl: MhlList,
+    /// Manifests written into every destination: v2 (ASC MHL), v1.1, both (v2,v1.1), or none
+    /// [default: v2].
+    #[arg(long, value_name = "v2|v1.1|v2,v1.1|none", value_parser = parse_mhl)]
+    mhl: Option<MhlList>,
     /// Don't write the PDF report.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "logo")]
     no_pdf: bool,
     /// Logo (PNG or JPEG) for the PDF report.
     #[arg(long, value_name = "FILE")]
     logo: Option<PathBuf>,
     #[command(flatten)]
     production: ProductionArgs,
-    /// Give up on a destination after this many seconds without progress (0 = never).
-    #[arg(long, default_value = "60", value_name = "SECS")]
-    stall_timeout: u32,
+    /// Give up on a destination after this many seconds without progress (0 = never)
+    /// [default: 60].
+    #[arg(long, value_name = "SECS")]
+    stall_timeout: Option<u32>,
     /// Read/write chunk size in MiB (tuning).
     #[arg(long, default_value = "8", hide = true, value_parser = clap::value_parser!(u32).range(1..=256))]
     chunk_mib: u32,
+}
+
+impl JobArgs {
+    /// The flags as a preset overlay. Paths are made absolute so a saved preset doesn't
+    /// depend on the folder it was created from.
+    fn to_preset(&self) -> std::io::Result<Preset> {
+        let mut p = Preset::new();
+        if let Some(f) = &self.folder {
+            p.naming.folder =
+                Some(Template::parse(f).map_err(|e| std::io::Error::other(e.to_string()))?);
+        }
+        p.settings.hashes = self.hash.clone();
+        p.settings.source_reread = self.reread_source.then_some(true);
+        p.settings.parallel_files = self.parallel;
+        p.settings.stall_timeout_secs = self.stall_timeout;
+        p.reports.csv = self.no_csv.then_some(false);
+        p.reports.txt = self.no_txt.then_some(false);
+        p.reports.mhl = self.mhl.as_ref().map(|m| m.0.clone());
+        p.reports.pdf = if self.no_pdf {
+            Some(PdfSetting::Off)
+        } else {
+            match &self.logo {
+                Some(l) => Some(PdfSetting::On(PdfOptions {
+                    logo: Some(std::path::absolute(l)?),
+                })),
+                None => None,
+            }
+        };
+        for (i, d) in self.dests.iter().enumerate() {
+            let (label, root) = parse_dest(i, d);
+            p.destinations.push(PresetDestination {
+                label: Some(label),
+                root: std::path::absolute(root)?,
+            });
+        }
+        let a = &self.production;
+        p.production = ProductionInfo {
+            show: a.show.clone(),
+            episode: a.episode.clone(),
+            shoot_day: a.day.clone(),
+            camroll: a.camroll.clone(),
+            operator: a.operator.clone(),
+            company: a.company.clone(),
+            notes: a.notes.clone(),
+        };
+        Ok(p)
+    }
+}
+
+#[derive(Subcommand)]
+enum PresetCmd {
+    /// Save the given flags as a preset (by name in the presets folder, or to a file path).
+    New {
+        /// Preset name, or a path ending in `.toml`.
+        name: String,
+        /// Start from an existing preset and change only the flags given.
+        #[arg(long)]
+        from: Option<String>,
+        /// Replace an existing preset of that name.
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        job: Box<JobArgs>,
+    },
+    /// Print a preset in canonical form (validates it).
+    Show { preset: String },
+    /// List saved presets.
+    List,
 }
 
 /// Production details shown in the reports and written into the manifest.
@@ -130,6 +218,7 @@ fn main() -> ExitCode {
         Cmd::Resume { job } => resume(&job),
         Cmd::Jobs => jobs(),
         Cmd::Verify { dir } => verify(&dir),
+        Cmd::Preset { cmd } => return preset_cmd(*cmd),
     };
     match result {
         Ok(code) => code,
@@ -171,6 +260,15 @@ fn parse_mhl(s: &str) -> Result<MhlList, String> {
     Ok(MhlList(out))
 }
 
+fn parse_hashes(s: &str) -> Result<HashList, String> {
+    let algos = s
+        .split(',')
+        .map(|p| p.trim().parse::<HashAlgorithm>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    HashList::new(algos).map_err(|e| e.to_string())
+}
+
 fn parse_dest(i: usize, s: &str) -> (String, PathBuf) {
     if let Some((label, path)) = s.split_once('=')
         && !label.is_empty()
@@ -186,47 +284,89 @@ fn parse_dest(i: usize, s: &str) -> (String, PathBuf) {
     (label, path)
 }
 
+fn load_preset(name: &str) -> Result<Preset, String> {
+    let path = preset::locate(name);
+    if !path.exists() && !name.contains(['/', '\\']) && !name.ends_with(".toml") {
+        return Err(format!(
+            "no preset named '{name}' in {} (see `shortend preset list`)",
+            preset::presets_dir().display()
+        ));
+    }
+    Preset::load(&path).map_err(|e| e.to_string())
+}
+
 fn copy(a: CopyArgs) -> shortend_core::Result<ExitCode> {
-    let spec = JobSpec {
-        source: a.source,
-        card_label: None,
-        destinations: a
-            .dests
-            .iter()
-            .enumerate()
-            .map(|(i, s)| parse_dest(i, s))
-            .collect(),
-        folder: a.folder,
-        settings: JobSettings {
-            hashes: HashList::single(a.hash),
-            source_reread: a.reread_source,
-            parallel_files: a.parallel,
-            chunk_size: a.chunk_mib << 20,
-            stall_timeout_secs: a.stall_timeout,
-            reports: ReportOptions {
-                csv: !a.no_csv,
-                txt: !a.no_txt,
-                mhl: a.mhl.0,
-                pdf: (!a.no_pdf).then_some(PdfOptions { logo: a.logo }),
-            },
-            ..JobSettings::default()
-        },
-        production: ProductionInfo {
-            show: a.production.show,
-            episode: a.production.episode,
-            shoot_day: a.production.day,
-            camroll: a.production.camroll,
-            operator: a.production.operator,
-            company: a.production.company,
-            notes: a.production.notes,
-        },
+    let refuse = |m: String| Error::Preflight(vec![m]);
+    let base = match &a.preset {
+        Some(name) => load_preset(name).map_err(refuse)?,
+        None => Preset::new(),
     };
+    let flags = a.job.to_preset().map_err(|e| refuse(e.to_string()))?;
+    let mut spec = base.overlay(&flags).job_spec(a.source);
+    spec.settings.chunk_size = a.job.chunk_mib << 20;
+    if let Some(name) = base.name.as_ref().or(a.preset.as_ref()) {
+        println!("Preset  {name}");
+    }
     let job = shortend_core::plan(spec)?;
     print_plan(&job);
     let job_for_run = job.clone();
     execute(&job, move |tx, cancel| {
         shortend_core::run(&job_for_run, &tx, &cancel)
     })
+}
+
+fn preset_cmd(cmd: PresetCmd) -> ExitCode {
+    let result: Result<(), String> = (|| match cmd {
+        PresetCmd::New {
+            name,
+            from,
+            force,
+            job,
+        } => {
+            let base = match &from {
+                Some(f) => load_preset(f)?,
+                None => Preset::new(),
+            };
+            let mut p = base.overlay(&job.to_preset().map_err(|e| e.to_string())?);
+            let path = preset::locate(&name);
+            p.name = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+            p.save(&path, force).map_err(|e| e.to_string())?;
+            println!("saved preset {}", path.display());
+            print!("{}", p.to_toml());
+            Ok(())
+        }
+        PresetCmd::Show { preset } => {
+            print!("{}", load_preset(&preset)?.to_toml());
+            Ok(())
+        }
+        PresetCmd::List => {
+            let all = preset::list();
+            if all.is_empty() {
+                println!("no presets in {}", preset::presets_dir().display());
+            }
+            for (name, path, loaded) in all {
+                match loaded {
+                    Ok(p) => println!(
+                        "{name:<24} {}  {}",
+                        p.naming
+                            .folder
+                            .as_ref()
+                            .map_or_else(|| "(card name)".to_owned(), ToString::to_string),
+                        path.display()
+                    ),
+                    Err(e) => println!("{name:<24} INVALID: {}", e.message),
+                }
+            }
+            Ok(())
+        }
+    })();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(EXIT_REFUSED)
+        }
+    }
 }
 
 fn resume(id: &str) -> shortend_core::Result<ExitCode> {
@@ -241,6 +381,13 @@ fn resume(id: &str) -> shortend_core::Result<ExitCode> {
 
 fn print_plan(job: &Job) {
     println!("Job {}", job.id);
+    if job.naming.is_some() {
+        println!(
+            "  folder  {}  (number {} is claimed on every destination when the copy starts)",
+            job.folder,
+            job.seq.unwrap_or_default()
+        );
+    }
     println!(
         "  source  {}  ({} files, {})",
         job.source.root.display(),

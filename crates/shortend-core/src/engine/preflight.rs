@@ -10,6 +10,7 @@ use crate::fs::names::{case_collisions, component_problem};
 use crate::fs::scan::{Scan, scan};
 use crate::fs::{FsType, RelPath, VolumeInfo, canonical_dir, platform, same_volume_dir};
 use crate::model::{DestId, Destination, Job, JobId, JobSpec, Source};
+use crate::naming::{Expanded, Template, Values};
 
 /// Created at each destination root to hold in-flight `.part` files on the same volume.
 pub const STAGING_DIR: &str = ".shortend-staging";
@@ -42,8 +43,6 @@ pub fn plan(mut spec: JobSpec) -> Result<Job> {
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| "card".to_owned());
-    let folder_text = spec.folder.clone().unwrap_or_else(|| label.clone());
-    let folder = RelPath::new(&folder_text).map_err(|e| refuse(format!("folder name: {e}")))?;
     let src_probe = platform::volume_probe(&src_root)
         .map_err(|e| refuse(format!("source {}: {e}", src_root.display())))?;
 
@@ -71,17 +70,42 @@ pub fn plan(mut spec: JobSpec) -> Result<Job> {
     if spec.destinations.is_empty() {
         problems.push("no destinations given".to_owned());
     }
+    let named: Vec<(String, std::result::Result<std::path::PathBuf, String>)> = spec
+        .destinations
+        .iter()
+        .enumerate()
+        .map(|(i, (dlabel, root))| {
+            let name = if dlabel.is_empty() {
+                format!("destination {}", i + 1)
+            } else {
+                dlabel.clone()
+            };
+            let root = canonical_dir(root).map_err(|e| format!("{name} {}: {e}", root.display()));
+            (name, root)
+        })
+        .collect();
+
+    // --- folder name -------------------------------------------------------------------------
+    let created = Timestamp::now();
+    let roots: Vec<&Path> = named
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok().map(|p| p.as_path()))
+        .collect();
+    let (folder, naming, seq) = match resolve_folder(&spec, &label, &created, &roots, &mut warnings)
+    {
+        Ok(f) => f,
+        Err(mut p) => {
+            problems.append(&mut p);
+            return Err(Error::Preflight(problems));
+        }
+    };
+
     let mut dests: Vec<Destination> = Vec::new();
-    for (i, (dlabel, root)) in spec.destinations.iter().enumerate() {
-        let name = if dlabel.is_empty() {
-            format!("destination {}", i + 1)
-        } else {
-            dlabel.clone()
-        };
-        let root = match canonical_dir(root) {
+    for (i, (name, root)) in named.into_iter().enumerate() {
+        let root = match root {
             Ok(r) => r,
             Err(e) => {
-                problems.push(format!("{name} {}: {e}", root.display()));
+                problems.push(e);
                 continue;
             }
         };
@@ -134,8 +158,10 @@ pub fn plan(mut spec: JobSpec) -> Result<Job> {
     }
     Ok(Job {
         id,
-        created: Timestamp::now(),
+        created,
         folder,
+        naming,
+        seq,
         source: Source {
             root: src_root,
             label,
@@ -155,6 +181,61 @@ pub fn plan(mut spec: JobSpec) -> Result<Job> {
         files: found.files,
         dirs: found.dirs,
     })
+}
+
+/// The job folder from the spec's template (or the card name), with a provisional `{seq}`.
+fn resolve_folder(
+    spec: &JobSpec,
+    label: &str,
+    now: &Timestamp,
+    roots: &[&Path],
+    warnings: &mut Vec<String>,
+) -> std::result::Result<(RelPath, Option<Expanded>, Option<u64>), Vec<String>> {
+    let Some(text) = &spec.folder else {
+        return RelPath::new(label)
+            .map(|f| (f, None, None))
+            .map_err(|e| vec![format!("folder name '{label}': {e}")]);
+    };
+    let template = Template::parse(text).map_err(|e| vec![e.to_string()])?;
+    let zoned = now.to_zoned(jiff::tz::TimeZone::system());
+    let expanded = template.expand(&Values {
+        now: &zoned,
+        production: &spec.production,
+        card: label,
+    })?;
+    warnings.extend(expanded.warnings.iter().cloned());
+    let seq = expanded
+        .slot
+        .is_some()
+        .then(|| expanded.next_seq(roots.iter().copied()));
+    let text = expanded.folder(seq.unwrap_or(0));
+    let folder = RelPath::new(&text).map_err(|e| vec![format!("folder '{text}': {e}")])?;
+    Ok((folder, seq.map(|_| expanded), seq))
+}
+
+/// Claims the job's `{seq}` number on every destination (see [`crate::naming`]) and fixes the
+/// folder. Returns a note if the provisional number had been taken meanwhile.
+pub(crate) fn claim_seq(job: &mut Job) -> Result<Option<String>> {
+    let (Some(naming), Some(provisional)) = (job.naming.take(), job.seq) else {
+        return Ok(None);
+    };
+    let roots: Vec<&Path> = job.destinations.iter().map(|d| d.root.as_path()).collect();
+    let n = naming
+        .reserve(&roots, provisional)
+        .map_err(|e| Error::io_at(&job.destinations[0].root, e))?;
+    let folder =
+        RelPath::new(&naming.folder(n)).map_err(|e| Error::Preflight(vec![e.to_string()]))?;
+    for d in &mut job.destinations {
+        d.target = folder.to_path(&d.root);
+    }
+    job.folder = folder;
+    job.seq = Some(n);
+    Ok((n != provisional).then(|| {
+        format!(
+            "folder number {provisional} was taken by another offload meanwhile; using {n}: {}",
+            job.folder
+        )
+    }))
 }
 
 fn overlaps(a: &Path, b: &Path) -> bool {

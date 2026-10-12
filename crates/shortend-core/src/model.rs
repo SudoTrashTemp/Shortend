@@ -184,6 +184,7 @@ impl Default for JobSettings {
 pub struct ProductionInfo {
     pub show: Option<String>,
     pub episode: Option<String>,
+    #[serde(rename = "day", alias = "shoot_day")]
     pub shoot_day: Option<String>,
     pub camroll: Option<String>,
     pub operator: Option<String>,
@@ -217,8 +218,8 @@ pub struct JobSpec {
     pub card_label: Option<String>,
     /// (label, root) pairs.
     pub destinations: Vec<(String, PathBuf)>,
-    /// Folder created under each destination root (`/`-separated); defaults to the card name.
-    /// Replaced by naming templates in M3.
+    /// Folder template (see [`crate::naming`]) created under each destination root; defaults
+    /// to the card name.
     pub folder: Option<String>,
     pub settings: JobSettings,
     pub production: ProductionInfo,
@@ -230,7 +231,15 @@ pub struct JobSpec {
 pub struct Job {
     pub id: JobId,
     pub created: Timestamp,
+    /// The folder created under every destination root. With `{seq}`, the number is
+    /// provisional until [`crate::run`] claims it on every destination.
     pub folder: RelPath,
+    /// The expanded template, kept while `{seq}` is still to be claimed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub naming: Option<crate::naming::Expanded>,
+    /// The sequence number in `folder`, if the template has `{seq}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
     pub source: Source,
     pub destinations: Vec<Destination>,
     pub settings: JobSettings,

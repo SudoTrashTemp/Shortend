@@ -25,7 +25,16 @@ pub fn plan(spec: JobSpec) -> Result<Job> {
 
 /// Runs a planned job to completion, cancellation or source loss. The job's state is
 /// persisted first, so it can be resumed after a crash at any point.
+///
+/// A `{seq}` folder number is claimed on every destination first; the report's job carries
+/// the final folder.
 pub fn run(job: &Job, events: &SyncSender<Event>, cancel: &CancelToken) -> Result<JobReport> {
+    let mut job = job.clone();
+    if let Some(note) = preflight::claim_seq(&mut job)? {
+        job.warnings.push(note.clone());
+        let _ = events.send(Event::Warning(note));
+    }
+    let job = &job;
     let dir = state::jobs_root().join(job.id.to_string());
     state::save(&dir, job)?;
     let journal = open_journal(&dir)?;

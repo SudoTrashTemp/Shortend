@@ -1,6 +1,6 @@
 # ShortEnd — Design Plan
 
-Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1 and M2 implemented (see §9 checklists)
+Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1–M3 implemented (see §9 checklists)
 
 ShortEnd is a Linux-first, verified media offloader for DIT work: one source (a camera card or
 folder) copied to N destinations, every copy verified by read-back against a single in-stream
@@ -192,7 +192,7 @@ pub struct Destination {
 
 /// Non-empty, de-duplicated, ordered set of algorithms; the first is the *primary*
 /// (shown first in reports, used for MHL). Default: [Xxh64]. Exposing more than one is an
-/// explicit preset option (M3); the CLI in M1 takes a single `--hash`.
+/// explicit option: `settings.hashes` in a preset, `--hash xxh64,md5` on the CLI (M3).
 pub struct HashList(Vec<HashAlgorithm>);   // not `HashSet`, to avoid clashing with std
 
 /// One digest per algorithm in the job's HashList, same order.
@@ -542,33 +542,33 @@ everywhere. Frame sequences (DNG, ARRIRAW) are listed as ranges in the clip sect
 
 ## 6. Presets and naming (M3)
 
-Presets are TOML files in `~/.config/shortend/presets/` (platform equivalents), loadable from
-any path, with no machine-specific state inside (so they can be shared between DITs).
+Presets are TOML files in the presets folder (`$XDG_CONFIG_HOME/shortend/presets/`,
+`~/Library/Application Support/ShortEnd/presets/`, `%APPDATA%\ShortEnd\presets\`;
+`SHORTEND_CONFIG_DIR` overrides), loadable from any path, with no machine-specific state
+inside (so they can be shared between DITs). Every key except `format_version` is optional;
+unknown keys and unknown `format_version`s are errors. `examples/bigshow.toml` is the
+reference:
 
 ```toml
-name = "Big Show S01"
 format_version = 1
+name = "Big Show S01"
 
 [naming]
-folder = "{show}/{date:%Y%m%d}_D{day}/{camroll}_{card}_{seq:3}"
+folder = "{show}/{date:%Y%m%d}_D{day}/{camroll}_{seq:3}"
 
 [settings]
-hash = "xxh64"
+hashes = ["xxh64", "md5"]      # or one: hashes = "xxh64"; computed in one read pass
 source_reread = false
 
 [reports]
 csv = true
 txt = true
-mhl = "v2"
-pdf = { logo = "~/logos/bigshow.png", thumbnails = true }
+mhl = ["v2", "v1.1"]           # "v2", "v1.1", both, or "none"
+pdf = { logo = "bigshow.png" } # true / false / options; relative to the preset file
 
 [[destinations]]
 label = "RAID"
 root = "/mnt/raid/BIGSHOW"
-
-[[destinations]]
-label = "Shuttle A"
-root = "/media/dit/SHUTTLE_A"
 
 [production]
 show = "Big Show"
@@ -577,16 +577,22 @@ company = "Example Productions"
 operator = "Jane Doe"
 ```
 
-Tokens: `{date[:fmt]}`, `{time}`, `{show}`, `{episode}`, `{day}`, `{card}`, `{camroll}`,
-`{seq[:width]}`. `{camrol}` is accepted as a silent alias of `{camroll}` so ShotPut Pro-style
-presets load unchanged; saved presets always write `{camroll}`. Unknown tokens and unbalanced braces are load-time errors; a token whose
-value is empty is a preflight error (never silently produces `//`).
+Tokens: `{date[:fmt]}` (default `%Y%m%d`), `{time[:fmt]}` (default `%H%M%S`), `{show}`,
+`{episode}`, `{day}`, `{card}`, `{camroll}`, `{seq[:width]}` (width 1–9); `{{`/`}}` are literal
+braces. `{camrol}` is accepted as a silent alias of `{camroll}` so ShotPut Pro-style presets
+load unchanged; saved presets always write `{camroll}`. Unknown tokens, unbalanced braces,
+bad widths/formats, `{seq}` more than once and a date format containing `/` are load-time
+errors; a token whose value is empty is a preflight error (never silently produces `//`).
+Token values are sanitized (path separators, `:*?"<>|` and control characters become `_`;
+surrounding spaces and trailing dots are dropped) and the plan warns when a value changed.
 
 **Safe sequential numbering:** `{seq}` is computed across *all* destinations as
-`max(existing matching numbers) + 1`, then the target folder is created with `create_dir`
-(fails if it exists) on every destination; on any collision the number is bumped and creation
-retried, so all copies of one offload share one number and two concurrent jobs can't take the
-same one. No counter file is stored, so a preset copied to another machine can't drift.
+`max(existing matching numbers) + 1` at plan time (provisional), then claimed when the job
+starts: the numbered folder is created with `create_dir` (fails if it exists) on every
+destination in a fixed (sorted) order; on any collision the folders just created are removed
+and the next number is tried, so all copies of one offload share one number and two concurrent
+jobs can't take the same one. No counter file is stored, so a preset copied to another
+machine can't drift. Resume uses the stored folder and never claims a new number.
 
 ---
 
@@ -816,11 +822,30 @@ Done when:
 Scope: template parser/expander, sanitization, `{seq}` allocation; preset TOML load/save/
 validate; CLI `--preset <file|name>` with flag overrides; `shortend preset new|show|list`.
 
+Also in M3 (from the M1 plan decision): several checksum algorithms per preset
+(`settings.hashes`, CLI `--hash xxh64,md5`), computed in the single read pass the M1 hashing
+layer was built for, and written to every manifest that can carry them.
+
 Done when:
-- [ ] Template tests cover every token, formats, sanitization and error cases.
-- [ ] `{seq}` test with pre-existing folders on mismatched destinations and two concurrent
-      jobs yields unique, identical-per-job numbers.
-- [ ] Preset round-trip and rejection tests pass; an example preset ships in `examples/`.
+- [x] Template tests cover every token, formats, sanitization and error cases.
+      *`naming.rs` unit tests; `tests/naming.rs` runs templates through the engine (empty
+      values refused with nothing written, sanitized values warned).*
+- [x] `{seq}` test with pre-existing folders on mismatched destinations and two concurrent
+      jobs yields unique, identical-per-job numbers. *Two jobs planned together (both
+      provisional 005) run concurrently and get 005 and 006 on both destinations; plus a
+      12-thread claim stress test over overlapping destination sets; resume keeps the folder.*
+- [x] Preset round-trip and rejection tests pass; an example preset ships in `examples/`.
+      *Round trip (load → save → load) incl. `{camrol}` → `{camroll}`; 19 rejection cases;
+      CLI `preset new|show|list`, `--from`, `--force`, invalid presets listed and refused;
+      a preset with three checksums and both manifests drives a copy end to end.*
+
+**M3 implementation notes:**
+- Flags override the preset field by field; `--dest` replaces the preset's destinations as a
+  whole. `shortend preset new NAME [flags]` saves the flags (paths made absolute);
+  `--from OTHER` starts from another preset.
+- A preset's destination roots must be absolute (`~/` is expanded). A relative logo path is
+  relative to the preset file.
+- `[production] day` is the shoot day (`shoot_day` is still read, for job files written by M1/M2).
 
 ### M4 — GUI (egui)
 

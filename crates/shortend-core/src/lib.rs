@@ -11,6 +11,8 @@ mod error;
 pub mod fs;
 pub mod hash;
 pub mod model;
+pub mod naming;
+pub mod preset;
 pub mod report;
 
 pub use engine::{JobListing, list_jobs, load_job, plan, resume, run};

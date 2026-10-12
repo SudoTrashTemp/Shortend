@@ -1,0 +1,38 @@
+# ShortEnd preset (shareable: copy it to another machine and adjust the destination roots).
+# Save it as ~/.config/shortend/presets/bigshow.toml to use it by name:
+#   shortend copy -s /media/A001 --preset bigshow --day 07 --camroll A001
+# Every key is optional; flags given on the command line override the preset.
+format_version = 1
+name = "Big Show S01"
+
+[naming]
+# Tokens: {date[:fmt]} {time[:fmt]} {show} {episode} {day} {card} {camroll} {seq[:width]}
+# ({camrol} is accepted too). {seq} is the next free number across all destinations.
+folder = "{show}/{date:%Y%m%d}_D{day}/{camroll}_{seq:3}"
+
+[settings]
+# Several checksums are computed in a single read of the card; the first is the primary.
+hashes = ["xxh64", "md5"]
+source_reread = false
+parallel_files = 2
+stall_timeout_secs = 60
+
+[reports]
+csv = true
+txt = true
+mhl = ["v2", "v1.1"]          # "v2", "v1.1", both, or "none"
+pdf = { logo = "bigshow.png" } # true, false, or options; the logo path is relative to this file
+
+[[destinations]]
+label = "RAID"
+root = "/mnt/raid/BIGSHOW"
+
+[[destinations]]
+label = "Shuttle A"
+root = "/media/dit/SHUTTLE_A"
+
+[production]
+show = "Big Show"
+episode = "101"
+company = "Example Productions"
+operator = "Jane Doe"
