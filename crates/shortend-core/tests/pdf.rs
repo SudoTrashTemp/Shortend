@@ -186,6 +186,7 @@ fn ten_thousand_file_report() {
         .find(|p| p.extension().is_some_and(|x| x == "pdf"))
         .unwrap();
     let size = std::fs::metadata(pdf).unwrap().len();
+    eprintln!("10k-file PDF is {size} bytes");
     assert!(size < 8_000_000, "PDF is {size} bytes");
     if let Some(text) = check_readable(pdf) {
         assert!(text.contains("A001C000_frame_0000000.dng"));

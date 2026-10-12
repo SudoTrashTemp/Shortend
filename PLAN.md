@@ -1,6 +1,6 @@
 # ShortEnd — Design Plan
 
-Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1 implemented (see §9 M1 checklist)
+Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1 and M2 implemented (see §9 checklists)
 
 ShortEnd is a Linux-first, verified media offloader for DIT work: one source (a camera card or
 folder) copied to N destinations, every copy verified by read-back against a single in-stream
@@ -738,15 +738,64 @@ device-mapper unplug tests, and fix what it finds.
 
 Done when:
 - [x] CI green on all three platforms and the privileged Linux job (carried from M1).
-- [ ] Stall watchdog: a test with a destination whose writes block (FUSE or dm `delay`/
+- [x] Stall watchdog: a test with a destination whose writes block (FUSE or dm `delay`/
       suspended target) marks it `DestinationStalled` within the timeout, the other
-      destination completes, and the job reports it; exit code 1.
-- [ ] Every MHL produced by the test suite passes `xmllint --schema` against the vendored XSD.
-- [ ] `ascmhl verify` accepts ShortEnd v2 output; ShortEnd `verify` accepts reference-tool
-      golden fixtures (v2 and v1.1) and detects a tampered file.
-- [ ] Second offload of an already-MHL'd folder produces generation 0002 with correct chain.
-- [ ] PDF for a 10k-file job renders, opens in at least two viewers (poppler `pdftotext`
-      check in CI), and includes logo and Unicode filenames correctly.
+      destination completes, and the job reports it; exit code 1. *Two tests: a frozen
+      (suspended) device-mapper target in `linux-devices` (job finishes ~1 s after the 3 s
+      timeout; resume completes the destination after unfreezing), and an injected hung
+      writer through the CLI on all three platforms (exit 1, no report written to the hung
+      destination, resume completes it).*
+- [x] Every MHL produced by the test suite passes `xmllint --schema` against the vendored XSD.
+      *All manifests written by `tests/mhl.rs` (v2 generations, chain files, v1.1) are
+      validated; CI fails if `xmllint` is missing on Linux/macOS.*
+- [x] `ascmhl verify` accepts ShortEnd v2 output; ShortEnd `verify` accepts reference-tool
+      golden fixtures (v2 and v1.1) and detects a tampered file. *The reference CLI's verify is
+      `ascmhl-debug verify` (ascmhl 1.2); `simple-mhl verify` (mhl-suite) accepts our v1.1.
+      Fixtures: reference histories in all six algorithms plus a two-generation history,
+      a `simple-mhl`-sealed v1.1 and a legacy little-endian `xxhash64` v1.1.*
+- [x] Second offload of an already-MHL'd folder produces generation 0002 with correct chain.
+      *For every algorithm; directory and root hashes equal the reference's generation 0001.*
+- [x] PDF for a 10k-file job renders, opens in at least two viewers (poppler `pdftotext`
+      check in CI), and includes logo and Unicode filenames correctly. *Checked with
+      poppler (`pdftotext`, `pdfinfo`, `pdfimages`) and `qpdf --check`. Latin, Greek and
+      Cyrillic names render; scripts the embedded font lacks (e.g. CJK) appear as
+      `[U+XXXX]` — see notes.*
+
+**M2 implementation notes** (deviations and decisions):
+- `shortend verify` is read-only, like the reference `ascmhl-debug verify` (§5.3 said it
+  would append a generation; the reference tool's verify does not, and a read-only check is
+  safer to run on a delivery drive). It verifies an ASC MHL history, or every `.mhl` v1.1
+  file in the folder.
+- SHA-256 is not in the official ASC MHL v2 XSD (commit 0fb61f1), so a job whose only
+  checksum is SHA-256 is refused with a manifest enabled; extra algorithms a manifest format
+  cannot carry are kept in CSV/TXT/PDF and reported as a warning.
+- ASC MHL generations use process `transfer`; author = operator; the other production
+  fields go into `<comment>`. File order, directory content/structure hashes and the default
+  ignore list match the reference implementation byte-for-value; `_ShortEnd/` is added to
+  the ignore list.
+- A card that carries an ASC MHL history: its chain is verified at preflight (a damaged
+  history refuses the job unless `--mhl none`), every algorithm it uses is added to the job
+  (computed in the same read pass), the copy extends it with a new generation, and the card is
+  checked against its own history on every completed run (including resumes): files that
+  contradict it fail on every destination (`SourceManifestMismatch`) and files it lists that
+  the card lacks are reported; either fails the job. Nested histories are copied but not
+  extended (warning).
+- Resume: the card's `ascmhl_chain.xml` on a destination legitimately differs from the card
+  once ShortEnd has extended it, so it is not re-copied when the journal records that a
+  manifest was written there. A new generation is written only if the run copied something.
+- MHL v1.1 cannot list zero-byte files (its schema requires `size ≥ 1`); they are left out
+  with a warning and remain in CSV/TXT/PDF.
+- PDF fonts: DejaVu Sans/Bold/Mono (Bitstream Vera license, permissive; not OFL as planned)
+  embedded and subset with `allsorts` (printpdf only subsets with its HTML layout engine,
+  which would pull in a large dependency tree). A 10k-file report is ~340 KB (about 120
+  pages, rendered in ~1 s in release builds). CJK and other
+  scripts DejaVu lacks are shown as `[U+XXXX]` rather than altered; exact names stay in
+  CSV/TXT/MHL. Candidate for M6: an optional system fallback font.
+- Stall watchdog limits: the watchdog runs while files are copied. A destination that hangs
+  during resume's re-verification pass or while its folders are prepared at job start still
+  blocks the job (cancel works once the kernel returns). To fix with the M4 progress view.
+- Windows: canonical paths are reported without the `\\?\` prefix (it broke external tools
+  and was unreadable in reports).
 
 ### M3 — Presets and naming templates
 
