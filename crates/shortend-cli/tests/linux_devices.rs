@@ -437,6 +437,8 @@ fn dest_failure(events: &[Event], dest: u16) -> Option<Failure> {
 fn offload_onto_real_filesystems() {
     privileged!();
     let _g = serial();
+    // GitHub keeps at most 10 notices per step, so results are reported as one line here.
+    let mut results = Vec::new();
     for fs in [Fs::Ext4, Fs::ExFat, Fs::Vfat, Fs::Ntfs] {
         let tmp = tempfile::tempdir().unwrap();
         let Some(vol) = Volume::create(tmp.path(), "dst", 256, fs, false) else {
@@ -453,12 +455,13 @@ fn offload_onto_real_filesystems() {
         let tolerance = rep.job.destinations[0].volume.fs_type.mtime_granularity();
         assert_copy(&src, &vol.dir.join("A001"), tolerance);
         assert!(!vol.dir.join(".shortend-staging").exists());
-        notice(&format!(
-            "{fs:?}{}: ok (case-sensitive: {})",
+        results.push(format!(
+            "{fs:?}{} ok (case-sensitive: {})",
             if vol.fuse { " via FUSE" } else { "" },
             rep.job.destinations[0].volume.case_sensitive
         ));
     }
+    notice(&format!("filesystems: {}", results.join("; ")));
 }
 
 #[test]
