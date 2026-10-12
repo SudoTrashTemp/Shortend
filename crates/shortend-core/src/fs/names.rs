@@ -50,14 +50,24 @@ pub fn component_problem(name: &str, fs: &FsType) -> Option<String> {
     None
 }
 
-/// Pairs of paths that would map to the same entry on a case-insensitive filesystem.
+/// Pairs of paths that would map to the same entry on a filesystem that ignores case and/or
+/// Unicode normalization (HFS+, APFS: "é" precomposed and "e" + combining accent are one name).
 pub fn case_collisions<'a>(
     paths: impl IntoIterator<Item = &'a RelPath>,
+    ignore_case: bool,
+    ignore_normalization: bool,
 ) -> Vec<(RelPath, RelPath)> {
+    use unicode_normalization::UnicodeNormalization;
     let mut seen: HashMap<String, &RelPath> = HashMap::new();
     let mut out = Vec::new();
     for p in paths {
-        let key = p.as_str().to_lowercase();
+        let mut key = p.as_str().to_owned();
+        if ignore_normalization {
+            key = key.nfd().collect();
+        }
+        if ignore_case {
+            key = key.to_lowercase();
+        }
         match seen.get(&key) {
             Some(first) => out.push(((*first).clone(), p.clone())),
             None => {
@@ -101,7 +111,15 @@ mod tests {
         let a = RelPath::new("Clip/A.MOV").unwrap();
         let b = RelPath::new("clip/a.mov").unwrap();
         let c = RelPath::new("clip/b.mov").unwrap();
-        let found = case_collisions([&a, &b, &c]);
-        assert_eq!(found, vec![(a, b)]);
+        let found = case_collisions([&a, &b, &c], true, false);
+        assert_eq!(found, vec![(a.clone(), b.clone())]);
+        assert!(case_collisions([&a, &b, &c], false, false).is_empty());
+        let nfc = RelPath::new("caf\u{e9}.mov").unwrap();
+        let nfd = RelPath::new("cafe\u{301}.mov").unwrap();
+        assert_eq!(
+            case_collisions([&nfc, &nfd], false, true),
+            vec![(nfc.clone(), nfd.clone())]
+        );
+        assert!(case_collisions([&nfc, &nfd], true, false).is_empty());
     }
 }

@@ -52,6 +52,10 @@ impl FsType {
     pub fn mtime_granularity(&self) -> std::time::Duration {
         match self {
             Self::Vfat => std::time::Duration::from_secs(2),
+            // HFS+ stores whole seconds.
+            Self::HfsPlus => std::time::Duration::from_secs(1),
+            // NTFS stores 100 ns units.
+            Self::Ntfs => std::time::Duration::from_nanos(100),
             // exFAT stores 10 ms increments; SMB/NFS servers vary. Be generous: a 2 s window
             // never confuses two different camera files, which also differ in size or content.
             Self::ExFat | Self::Smb | Self::Nfs | Self::Other(_) => {

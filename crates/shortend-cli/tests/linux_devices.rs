@@ -119,6 +119,12 @@ enum Fs {
     ExFat,
     Vfat,
     Ntfs,
+    /// HFS+, not journaled, case-insensitive (the macOS default before journaling).
+    Hfs,
+    /// HFS+, journaled (the macOS default "Mac OS Extended (Journaled)").
+    HfsJournaled,
+    /// HFSX: HFS+, case-sensitive.
+    Hfsx,
 }
 
 impl Fs {
@@ -128,6 +134,9 @@ impl Fs {
             Fs::ExFat => run("mkfs.exfat", &[dev]),
             Fs::Vfat => run("mkfs.vfat", &["-F", "32", dev]),
             Fs::Ntfs => run("mkfs.ntfs", &["-Q", "-F", dev]),
+            Fs::Hfs => run("mkfs.hfsplus", &["-v", "CARD", dev]),
+            Fs::HfsJournaled => run("mkfs.hfsplus", &["-J", "-v", "CARD", dev]),
+            Fs::Hfsx => run("mkfs.hfsplus", &["-s", "-v", "CARD", dev]),
         }
     }
     fn mount_type(self) -> &'static str {
@@ -136,6 +145,7 @@ impl Fs {
             Fs::ExFat => "exfat",
             Fs::Vfat => "vfat",
             Fs::Ntfs => "ntfs3",
+            Fs::Hfs | Fs::HfsJournaled | Fs::Hfsx => "hfsplus",
         }
     }
     /// FUSE implementation to fall back to when the kernel has no driver.
@@ -146,13 +156,14 @@ impl Fs {
             _ => None,
         }
     }
-    fn expected(self, fuse: bool) -> FsType {
-        match (self, fuse) {
-            (_, true) => FsType::Other("fuseblk".into()),
-            (Fs::Ext4, _) => FsType::Ext4,
-            (Fs::ExFat, _) => FsType::ExFat,
-            (Fs::Vfat, _) => FsType::Vfat,
-            (Fs::Ntfs, _) => FsType::Ntfs,
+    /// The type ShortEnd must report, kernel driver or FUSE (it looks behind FUSE mounts).
+    fn expected(self) -> FsType {
+        match self {
+            Fs::Ext4 => FsType::Ext4,
+            Fs::ExFat => FsType::ExFat,
+            Fs::Vfat => FsType::Vfat,
+            Fs::Ntfs => FsType::Ntfs,
+            Fs::Hfs | Fs::HfsJournaled | Fs::Hfsx => FsType::HfsPlus,
         }
     }
 }
@@ -275,6 +286,28 @@ impl Volume {
             &["-t", self.fs.mount_type(), &dev, self.dir.to_str().unwrap()],
         )
         .unwrap();
+    }
+
+    /// Remounts read-write even if journaled (HFS+ `force`), to populate a test card.
+    fn remount_force_rw(&self) {
+        let dir = self.dir.to_str().unwrap();
+        let _ = run("umount", &[dir]);
+        run(
+            "mount",
+            &[
+                "-t",
+                self.fs.mount_type(),
+                "-o",
+                "force,rw",
+                &self.dev_path(),
+                dir,
+            ],
+        )
+        .unwrap();
+    }
+
+    fn remount_ro(&self) {
+        run("mount", &["-o", "remount,ro", self.dir.to_str().unwrap()]).unwrap();
     }
 
     fn remount(&self) {
@@ -460,7 +493,7 @@ fn offload_onto_real_filesystems() {
     let _g = serial();
     // GitHub keeps at most 10 notices per step, so results are reported as one line here.
     let mut results = Vec::new();
-    for fs in [Fs::Ext4, Fs::ExFat, Fs::Vfat, Fs::Ntfs] {
+    for fs in [Fs::Ext4, Fs::ExFat, Fs::Vfat, Fs::Ntfs, Fs::Hfs, Fs::Hfsx] {
         let tmp = tempfile::tempdir().unwrap();
         let Some(vol) = Volume::create(tmp.path(), "dst", 256, fs, false) else {
             continue;
@@ -469,10 +502,7 @@ fn offload_onto_real_filesystems() {
         card(&src, 12, 1_000_000);
         let (rep, _) = run_job(spec(&src, &[&vol.dir]), |_| {});
         assert_eq!(rep.state, JobState::Completed, "{fs:?}");
-        assert_eq!(
-            rep.job.destinations[0].volume.fs_type,
-            fs.expected(vol.fuse)
-        );
+        assert_eq!(rep.job.destinations[0].volume.fs_type, fs.expected());
         let tolerance = rep.job.destinations[0].volume.fs_type.mtime_granularity();
         assert_copy(&src, &vol.dir.join("A001"), tolerance);
         assert!(!vol.dir.join(".shortend-staging").exists());
@@ -893,4 +923,259 @@ fn case_collisions_and_illegal_names_are_refused_on_exfat() {
         0
     );
     notice("case_collisions_and_illegal_names_are_refused_on_exfat: passed");
+}
+
+// ------------------------------------------------------------------------------------------
+// Mac-formatted drives
+
+fn plan_err(spec: JobSpec) -> Vec<String> {
+    state_dir();
+    match shortend_core::plan(spec) {
+        Err(shortend_core::Error::Preflight(p)) => p,
+        other => panic!("expected refusal, got {:?}", other.map(|j| j.id)),
+    }
+}
+
+/// HFS+ as a source (journaled, mounted read-only as Linux does) and as a destination
+/// (non-journaled), including resume (HFS+ stores whole-second times) and verification of
+/// a decomposed-Unicode name (HFS+ returns names in NFD).
+#[test]
+fn hfs_plus_source_and_destination() {
+    privileged!();
+    let _g = serial();
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Journaled HFS+ card: populated with `force`, then mounted read-only.
+    let Some(card_vol) = Volume::create(tmp.path(), "hfscard", 128, Fs::HfsJournaled, false) else {
+        return;
+    };
+    card_vol.remount_force_rw();
+    let src = card_vol.dir.join("A009");
+    card(&src, 8, 700_000);
+    write(&src.join("Caf\u{e9} clip.mov"), &noise(5_000, 42));
+    run("sync", &[]).unwrap();
+    card_vol.remount_ro();
+
+    let Some(dst) = Volume::create(tmp.path(), "hfsdst", 128, Fs::Hfs, false) else {
+        return;
+    };
+    let mut s = spec(&src, &[&dst.dir]);
+    s.settings.reports.mhl = vec![shortend_core::report::mhl::MhlVersion::V2];
+    let (rep, _) = run_job(s, |_| {});
+    assert_eq!(rep.state, JobState::Completed, "{:?}", rep.warnings);
+    assert_eq!(rep.job.source.volume.fs_type, FsType::HfsPlus);
+    assert_eq!(rep.job.destinations[0].volume.fs_type, FsType::HfsPlus);
+    assert!(
+        !rep.job.destinations[0].volume.case_sensitive,
+        "HFS+ is case-insensitive"
+    );
+    assert_copy(&src, &dst.dir.join("A009"), Duration::from_secs(1));
+    let v = shortend_core::report::mhl::verify_folder(&dst.dir.join("A009")).unwrap();
+    assert!(v[0].ok(), "ShortEnd verify on HFS+: {:?}", v[0].issues);
+
+    // Resume re-verifies everything and copies nothing again.
+    let r = resume(&rep.job.id.to_string());
+    assert_eq!(r.state, JobState::Completed);
+    assert!(
+        r.outcomes
+            .iter()
+            .all(|o| o.dests[0].status == FileStatus::AlreadyVerified)
+    );
+    notice(
+        "hfs_plus_source_and_destination: passed (journaled read-only source, non-journaled destination, resume, NFD names)",
+    );
+}
+
+/// A journaled HFS+ drive is mounted read-only by Linux; as a destination ShortEnd refuses it
+/// with an explanation instead of failing on the first write.
+#[test]
+fn journaled_hfs_plus_destination_is_refused_clearly() {
+    privileged!();
+    let _g = serial();
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(vol) = Volume::create(tmp.path(), "hfsj", 64, Fs::HfsJournaled, false) else {
+        return;
+    };
+    let src = tmp.path().join("CARD");
+    card(&src, 2, 1_000);
+    let p = plan_err(spec(&src, &[&vol.dir]));
+    let all = p.join("\n");
+    assert!(all.contains("HFS+") && all.contains("journal"), "{all}");
+    notice("journaled_hfs_plus_destination_is_refused_clearly: passed");
+}
+
+/// Names that only differ in case collide on HFS+; names that only differ in Unicode
+/// normalization collide even on case-sensitive HFSX.
+#[test]
+fn hfs_plus_name_collisions_are_refused() {
+    privileged!();
+    let _g = serial();
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(hfs) = Volume::create(tmp.path(), "hfsci", 64, Fs::Hfs, false) else {
+        return;
+    };
+    let Some(hfsx) = Volume::create(tmp.path(), "hfsx", 64, Fs::Hfsx, false) else {
+        return;
+    };
+    let case = tmp.path().join("CASE");
+    write(&case.join("CLIP/A001.MOV"), b"1");
+    write(&case.join("CLIP/a001.mov"), b"2");
+    let all = plan_err(spec(&case, &[&hfs.dir])).join("\n");
+    assert!(all.contains("would collide"), "{all}");
+    let mut s = spec(&case, &[&hfsx.dir]);
+    s.settings.reports.mhl = Vec::new();
+    state_dir();
+    assert!(shortend_core::plan(s).is_ok(), "HFSX is case-sensitive");
+
+    let norm = tmp.path().join("NORM");
+    write(&norm.join("caf\u{e9}.wav"), b"composed");
+    write(&norm.join("cafe\u{301}.wav"), b"decomposed");
+    let all = plan_err(spec(&norm, &[&hfsx.dir])).join("\n");
+    assert!(
+        all.contains("Unicode normalization") && all.contains("would collide"),
+        "{all}"
+    );
+    notice("hfs_plus_name_collisions_are_refused: passed (case on HFS+, normalization on HFSX)");
+}
+
+/// Permissions on HFS+ (it stores Unix owners and modes): an unwritable destination folder is
+/// refused at preflight, an unreadable card file fails on its own.
+#[test]
+fn hfs_plus_permission_edge_cases() {
+    privileged!();
+    let _g = serial();
+    if run("setpriv", &["--help"]).is_err() {
+        skip_or_fail("setpriv", "not installed".into());
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let Some(vol) = Volume::create(tmp.path(), "hfsperm", 64, Fs::Hfs, false) else {
+        return;
+    };
+    let state = tmp.path().join("state");
+    std::fs::create_dir(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let src = vol.dir.join("CARD");
+    card(&src, 3, 10_000);
+    std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let locked_dest = vol.dir.join("root-only");
+    std::fs::create_dir(&locked_dest).unwrap();
+    std::fs::set_permissions(&locked_dest, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let open_dest = tmp.path().join("open");
+    std::fs::create_dir(&open_dest).unwrap();
+    std::fs::set_permissions(&open_dest, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let as_nobody = |src: &Path, dest: &Path| {
+        Command::new("setpriv")
+            .args([
+                "--reuid=65534",
+                "--regid=65534",
+                "--clear-groups",
+                env!("CARGO_BIN_EXE_shortend"),
+                "copy",
+                "--no-pdf",
+                "-s",
+            ])
+            .arg(src)
+            .arg("-d")
+            .arg(dest)
+            .env("SHORTEND_STATE_DIR", &state)
+            .output()
+            .unwrap()
+    };
+    let o = as_nobody(&src, &locked_dest);
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not writable"));
+
+    std::fs::set_permissions(
+        src.join("CLIP/C001.mov"),
+        std::fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    let o = as_nobody(&src, &open_dest);
+    assert_eq!(
+        o.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("CLIP/C001.mov"));
+    assert!(open_dest.join("CARD/CLIP/C000.mov").exists());
+    notice("hfs_plus_permission_edge_cases: passed");
+}
+
+/// APFS: Linux can only read it (apfs-fuse). As a source it is recognised behind FUSE; as a
+/// destination ShortEnd refuses early, naming APFS and what to do instead.
+#[test]
+fn apfs_is_detected_and_refused_as_destination() {
+    privileged!();
+    let _g = serial();
+    let find = |var: &str, name: &str| {
+        std::env::var_os(var).map(PathBuf::from).or_else(|| {
+            Command::new("which")
+                .arg(name)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+        })
+    };
+    let (Some(mkapfs), Some(apfs_fuse)) = (
+        find("SHORTEND_MKAPFS", "mkapfs"),
+        find("SHORTEND_APFS_FUSE", "apfs-fuse"),
+    ) else {
+        skip_or_fail(
+            "APFS",
+            "mkapfs and apfs-fuse not found (set SHORTEND_MKAPFS / SHORTEND_APFS_FUSE)".into(),
+        );
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let img = tmp.path().join("apfs.img");
+    std::fs::File::create(&img)
+        .unwrap()
+        .set_len(64 << 20)
+        .unwrap();
+    run(
+        mkapfs.to_str().unwrap(),
+        &["-L", "MACDRIVE", img.to_str().unwrap()],
+    )
+    .unwrap();
+    let mnt = tmp.path().join("mnt");
+    std::fs::create_dir(&mnt).unwrap();
+    run(
+        apfs_fuse.to_str().unwrap(),
+        &[
+            "-o",
+            "allow_other",
+            img.to_str().unwrap(),
+            mnt.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
+    struct Unmount(PathBuf);
+    impl Drop for Unmount {
+        fn drop(&mut self) {
+            let _ = Command::new("umount").arg(&self.0).output();
+        }
+    }
+    let _u = Unmount(mnt.clone());
+
+    let probe = shortend_core::fs::platform::volume_probe(&mnt.join("root")).unwrap();
+    assert_eq!(probe.fs_type, FsType::Apfs, "APFS recognised behind FUSE");
+    assert!(probe.read_only);
+
+    let src = tmp.path().join("CARD");
+    card(&src, 2, 1_000);
+    let all = plan_err(spec(&src, &[&mnt.join("root")])).join("\n");
+    assert!(
+        all.contains("APFS") && all.contains("read-only") && all.contains("exFAT"),
+        "{all}"
+    );
+    notice("apfs_is_detected_and_refused_as_destination: passed (apfs-fuse, read-only)");
 }

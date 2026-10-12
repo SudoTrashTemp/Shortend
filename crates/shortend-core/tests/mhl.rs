@@ -518,10 +518,16 @@ fn zero_byte_files_and_mhl_v11() {
     let v11 = rep
         .manifests
         .iter()
-        .find(|m| m.extension().unwrap() == "mhl" && m.parent() == Some(&*target))
+        .find(|m| {
+            // The v1.1 file sits next to the media, not in `ascmhl/` (compare by name: the
+            // engine's canonical paths differ from `target` on macOS and Windows).
+            m.extension().unwrap() == "mhl"
+                && m.parent().and_then(|p| p.file_name()) == target.file_name()
+        })
+        .map(|m| target.join(m.file_name().unwrap()))
         .unwrap();
-    assert_schema_valid(v11, "MediaHashList_v1_1.xsd");
-    assert!(!std::fs::read_to_string(v11).unwrap().contains("empty.bin"));
+    assert_schema_valid(&v11, "MediaHashList_v1_1.xsd");
+    assert!(!std::fs::read_to_string(&v11).unwrap().contains("empty.bin"));
 
     // Named in every report.
     let reports = target.join("_ShortEnd");

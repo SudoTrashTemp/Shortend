@@ -160,11 +160,17 @@ fn check_card(rep: &mut JobReport) {
             }
         }
     }
-    let on_card: HashSet<&str> = rep.job.files.iter().map(|f| f.rel.as_str()).collect();
+    use unicode_normalization::UnicodeNormalization;
+    let on_card: HashSet<String> = rep
+        .job
+        .files
+        .iter()
+        .map(|f| f.rel.as_str().nfc().collect())
+        .collect();
     let spec = v2::History::ignore_spec(Some(&history));
     let mut missing: Vec<&str> = history
         .file_paths()
-        .filter(|p| !on_card.contains(p) && !spec.is_ignored(p, false))
+        .filter(|p| !on_card.contains(&p.nfc().collect::<String>()) && !spec.is_ignored(p, false))
         .collect();
     missing.sort_unstable();
     for m in missing {

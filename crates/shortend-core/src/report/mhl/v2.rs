@@ -260,6 +260,21 @@ impl History {
     pub fn record(&self, path: &str) -> Option<&PathRecord> {
         self.records.get(path)
     }
+
+    /// Like [`record`](Self::record), but also finds the path if it is stored in another
+    /// Unicode normalization (HFS+ returns names decomposed). Returns the recorded path too.
+    pub fn record_any_form(&self, path: &str) -> Option<(&str, &PathRecord)> {
+        use unicode_normalization::UnicodeNormalization;
+        if let Some((k, r)) = self.records.get_key_value(path) {
+            return Some((k.as_str(), r));
+        }
+        let nfc: String = path.nfc().collect();
+        let nfd: String = path.nfd().collect();
+        [nfc, nfd]
+            .iter()
+            .find_map(|p| self.records.get_key_value(p.as_str()))
+            .map(|(k, r)| (k.as_str(), r))
+    }
 }
 
 /// `0001_Name_2020-01-01_120000Z.mhl` → 1.
@@ -846,8 +861,9 @@ pub fn verify(root: &Path, history: &History) -> Result<VerifyReport, MhlError> 
                 });
                 continue;
             }
-            seen.insert(rel.clone());
-            match history.record(&rel).and_then(|r| r.original.clone()) {
+            let recorded_as = history.record_any_form(&rel);
+            seen.insert(recorded_as.map_or_else(|| rel.clone(), |(k, _)| k.to_owned()));
+            match recorded_as.and_then(|(_, r)| r.original.clone()) {
                 None => report.issues.push(VerifyIssue::NotInManifest { rel }),
                 Some((algo, recorded)) => match hash_file(&root.join(&rel), algo) {
                     Ok(actual) if actual.value() == recorded => report.verified += 1,

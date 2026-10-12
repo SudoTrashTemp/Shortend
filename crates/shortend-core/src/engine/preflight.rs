@@ -112,6 +112,11 @@ pub fn plan(mut spec: JobSpec) -> Result<Job> {
                     ));
                 }
                 problems.append(&mut p);
+                if volume.fs_type == FsType::Apfs && cfg!(target_os = "linux") {
+                    warnings.push(format!(
+                        "{name} is APFS mounted writable; Linux APFS write support (linux-apfs) is experimental. Verify the copies on a Mac before relying on them"
+                    ));
+                }
                 dests.push(Destination {
                     id: DestId(i as u16),
                     label: name,
@@ -169,10 +174,7 @@ fn check_destination(
     let probe = platform::volume_probe(root)
         .map_err(|e| vec![format!("{name} {}: {e}", root.display())])?;
     if probe.read_only {
-        return Err(vec![format!(
-            "{name} {} is on a read-only volume",
-            root.display()
-        )]);
+        return Err(vec![read_only_explanation(name, root, &probe.fs_type)]);
     }
 
     // Writability and case sensitivity, probed inside our own staging folder.
@@ -227,12 +229,17 @@ fn check_destination(
             ));
         }
     }
-    if !case_sensitive {
+    // HFS+ and APFS also treat composed and decomposed Unicode (é vs e + ◌́) as one name.
+    let normalization_insensitive = matches!(probe.fs_type, FsType::HfsPlus | FsType::Apfs);
+    if !case_sensitive || normalization_insensitive {
         let all = found.dirs.iter().chain(found.files.iter().map(|f| &f.rel));
-        for (a, b) in case_collisions(all) {
-            naming.push(format!(
-                "{name} is case-insensitive: '{a}' and '{b}' would collide"
-            ));
+        let why = match (case_sensitive, normalization_insensitive) {
+            (false, true) => "ignores case and Unicode normalization",
+            (false, false) => "is case-insensitive",
+            _ => "ignores Unicode normalization",
+        };
+        for (a, b) in case_collisions(all, !case_sensitive, normalization_insensitive) {
+            naming.push(format!("{name} {why}: '{a}' and '{b}' would collide"));
         }
     }
     let extra = naming.len().saturating_sub(MAX_LISTED);
@@ -437,5 +444,24 @@ fn check_manifest_options(
         Err(e) => problems.push(format!(
             "the card's ASC MHL history cannot be trusted: {e}. Offload without a manifest (--mhl none) or repair the history first"
         )),
+    }
+}
+
+/// Why a destination volume is read-only, in terms a DIT can act on.
+fn read_only_explanation(name: &str, root: &Path, fs: &FsType) -> String {
+    let at = format!("{name} {}", root.display());
+    match fs {
+        FsType::Apfs => format!(
+            "{at} is on an APFS volume, which this system can only mount read-only \
+             (apfs-fuse, or the experimental linux-apfs driver without write support). ShortEnd \
+             cannot write to it. Use an exFAT, HFS+ (non-journaled) or ext4 drive as the \
+             destination, or reformat the drive; APFS drives can be written from macOS"
+        ),
+        FsType::HfsPlus if cfg!(target_os = "linux") => format!(
+            "{at} is on an HFS+ volume mounted read-only. Linux mounts journaled HFS+ \
+             read-only to protect it. On a Mac, turn journaling off (Disk Utility, or \
+             `diskutil disableJournal /Volumes/<name>`) and remount; or use an exFAT drive"
+        ),
+        _ => format!("{at} is on a read-only volume"),
     }
 }

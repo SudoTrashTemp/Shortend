@@ -64,9 +64,21 @@ jobs:
       - name: Install filesystem tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y exfatprogs exfat-fuse dosfstools ntfs-3g dmsetup
+          sudo apt-get install -y exfatprogs exfat-fuse dosfstools ntfs-3g dmsetup hfsprogs \
+            libfuse3-dev fuse3 cmake zlib1g-dev libbz2-dev libattr1-dev
+          # HFS+ lives in the extra modules package on cloud kernels.
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" || true
           sudo modprobe -a loop dm_mod || true
-          sudo modprobe -a exfat vfat ntfs3 || true
+          sudo modprobe -a exfat vfat ntfs3 hfsplus || true
+      - name: Build APFS tools (mkapfs, apfs-fuse)
+        run: |
+          mkdir -p "$RUNNER_TEMP/apfs" && cd "$RUNNER_TEMP/apfs"
+          git clone -q https://github.com/linux-apfs/apfsprogs.git && git -C apfsprogs checkout -q 3721463ba7f539e532907bc1d10ed5b9a97d0449
+          make -C apfsprogs/mkapfs -j4 > /dev/null
+          git clone -q --recursive https://github.com/sgan81/apfs-fuse.git && git -C apfs-fuse checkout -q 66b86bd525e8cb90f9012543be89b1f092b75cf3
+          cmake -S apfs-fuse -B apfs-fuse/build > /dev/null && make -C apfs-fuse/build -j4 apfs-fuse > /dev/null
+          echo "SHORTEND_MKAPFS=$RUNNER_TEMP/apfs/apfsprogs/mkapfs/mkapfs" >> "$GITHUB_ENV"
+          echo "SHORTEND_APFS_FUSE=$RUNNER_TEMP/apfs/apfs-fuse/build/apfs-fuse" >> "$GITHUB_ENV"
       - name: Build tests
         run: cargo test -p shortend-cli --test linux_devices --no-run
       - name: Device tests (root)
@@ -75,6 +87,7 @@ jobs:
             "RUSTFLAGS=$RUSTFLAGS" CARGO_TERM_COLOR=always GITHUB_ACTIONS=true \
             SHORTEND_PRIVILEGED_TESTS=1 SHORTEND_REQUIRE_ALL_FS=1 \
             SHORTEND_RESULTS_FILE="$PWD/device-results.txt" \
+            "SHORTEND_MKAPFS=$SHORTEND_MKAPFS" "SHORTEND_APFS_FUSE=$SHORTEND_APFS_FUSE" \
             cargo test -p shortend-cli --test linux_devices -- --test-threads=1 --nocapture
       - name: Report device test results
         if: always()
