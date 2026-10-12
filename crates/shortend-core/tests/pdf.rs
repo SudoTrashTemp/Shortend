@@ -52,7 +52,13 @@ fn check_readable(pdf: &Path) -> Option<String> {
     }
     tool(
         "pdftotext",
-        &["-layout".as_ref(), pdf.as_os_str(), "-".as_ref()],
+        &[
+            "-enc".as_ref(),
+            "UTF-8".as_ref(),
+            "-layout".as_ref(),
+            pdf.as_os_str(),
+            "-".as_ref(),
+        ],
     )
     .map(|o| {
         assert!(
