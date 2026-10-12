@@ -43,10 +43,22 @@ fn require_all() -> bool {
 macro_rules! privileged {
     () => {
         if !enabled() {
+            assert!(
+                !require_all(),
+                "SHORTEND_REQUIRE_ALL_FS=1 but not running as root with SHORTEND_PRIVILEGED_TESTS=1"
+            );
             eprintln!("skipped: needs root and SHORTEND_PRIVILEGED_TESTS=1");
             return;
         }
     };
+}
+
+/// Surfaces a line as a GitHub Actions annotation (visible via the checks API) and on stderr.
+fn notice(msg: &str) {
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        println!("::notice title=linux-devices::{msg}");
+    }
+    eprintln!("{msg}");
 }
 
 /// Device tests share loop/dm devices and global state; run them one at a time.
@@ -441,11 +453,11 @@ fn offload_onto_real_filesystems() {
         let tolerance = rep.job.destinations[0].volume.fs_type.mtime_granularity();
         assert_copy(&src, &vol.dir.join("A001"), tolerance);
         assert!(!vol.dir.join(".shortend-staging").exists());
-        eprintln!(
+        notice(&format!(
             "{fs:?}{}: ok (case-sensitive: {})",
             if vol.fuse { " via FUSE" } else { "" },
             rep.job.destinations[0].volume.case_sensitive
-        );
+        ));
     }
 }
 
@@ -485,6 +497,7 @@ fn hot_unplug_of_a_destination_isolates_it_and_resumes_after_reconnect() {
     let rep = resume(&rep.job.id.to_string());
     assert_eq!(rep.state, JobState::Completed);
     assert_copy(&src, &vol.dir.join("A002"), Duration::ZERO);
+    notice("hot_unplug_of_a_destination_isolates_it_and_resumes_after_reconnect: passed");
 }
 
 #[test]
@@ -529,6 +542,7 @@ fn hot_unplug_of_the_source_stops_the_job_and_resumes_after_reconnect() {
     let rep = resume(&rep.job.id.to_string());
     assert_eq!(rep.state, JobState::Completed);
     assert_copy(&src, &dst.join("A003"), Duration::ZERO);
+    notice("hot_unplug_of_the_source_stops_the_job_and_resumes_after_reconnect: passed");
 }
 
 #[test]
@@ -559,6 +573,7 @@ fn lazy_unmount_mid_copy_is_detected_before_commit() {
     let rep = resume(&rep.job.id.to_string());
     assert_eq!(rep.state, JobState::Completed);
     assert_copy(&src, &vol.dir.join("A004"), Duration::ZERO);
+    notice("lazy_unmount_mid_copy_is_detected_before_commit: passed");
 }
 
 #[test]
@@ -602,6 +617,7 @@ fn disk_filling_up_mid_job_fails_that_destination_cleanly() {
     let rep = resume(&rep.job.id.to_string());
     assert_eq!(rep.state, JobState::Completed);
     assert_copy(&src, &vol.dir.join("A005"), Duration::ZERO);
+    notice("disk_filling_up_mid_job_fails_that_destination_cleanly: passed");
 }
 
 #[test]
@@ -636,6 +652,7 @@ fn read_only_remount_mid_job_fails_that_destination() {
     let rep = resume(&rep.job.id.to_string());
     assert_eq!(rep.state, JobState::Completed);
     assert_copy(&src, &vol.dir.join("A006"), Duration::ZERO);
+    notice("read_only_remount_mid_job_fails_that_destination: passed");
 }
 
 /// Permission edge cases, exercised through the CLI as an unprivileged user.
@@ -717,6 +734,7 @@ fn permission_edge_cases_as_unprivileged_user() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("CLIP/C001.mov"));
     assert!(open_dest.join("CARD/CLIP/C000.mov").exists());
     assert!(!open_dest.join("CARD/CLIP/C001.mov").exists());
+    notice("permission_edge_cases_as_unprivileged_user: passed");
 }
 
 #[test]
@@ -747,4 +765,5 @@ fn case_collisions_and_illegal_names_are_refused_on_exfat() {
             .count(),
         0
     );
+    notice("case_collisions_and_illegal_names_are_refused_on_exfat: passed");
 }

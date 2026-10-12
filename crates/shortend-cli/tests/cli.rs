@@ -329,7 +329,11 @@ fn sigkill_at_random_points_then_resume() {
         assert_eq!(tree(&d2.join("CARD")), source, "iteration {it}");
         assert!(!d1.join(".shortend-staging").exists() && !d2.join(".shortend-staging").exists());
     }
-    eprintln!("{mid_copy}/{iterations} kills landed mid-copy (baseline {full} ms)");
+    let msg = format!("{mid_copy}/{iterations} kills landed mid-copy (baseline {full} ms)");
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        println!("::notice title=sigkill-resume::{msg}");
+    }
+    eprintln!("{msg}");
     assert!(
         mid_copy * 5 >= iterations,
         "too few kills landed mid-copy ({mid_copy}/{iterations}); timing is off"
