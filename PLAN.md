@@ -681,18 +681,19 @@ Done when:
       staging dir, and leaves the source byte-for-byte and atime-unchanged.
 - [x] Injected destination corruption is detected and reported, exit code 1.
 - [x] Randomized SIGKILL + `resume` test passes 25 seeded iterations.
-- [~] Linux privileged tests pass: ext4 + exFAT offload, dm-error unplug of one destination
-      (other completes), disk-full, read-only remount. *Passing on the dev VM: ext4, exFAT
-      and NTFS (via FUSE), lazy-unmount unplug, disk-full, read-only remount, permissions,
-      exFAT case-collision refusal. The dm-error unplug tests (destination and source) and
-      FAT/kernel exFAT run only in CI — the dev VM's kernel has no device-mapper or FAT.*
+- [x] Linux privileged tests pass: ext4 + exFAT offload, dm-error unplug of one destination
+      (other completes), disk-full, read-only remount. *CI (`linux-devices`, as root, with
+      `SHORTEND_REQUIRE_ALL_FS=1` so nothing can skip): ext4, kernel FAT, exFAT and NTFS via
+      FUSE; dm-error unplug of a destination and of the source, both resumed after reconnect;
+      lazy unmount; disk full; read-only remount; unprivileged-user permissions; exFAT
+      case-collision refusal.*
 - [x] Peak RSS for a single-file offload to 2 destinations stays under 100 MB. The test file
       size defaults to 4 GB (≥ 40× the bound, so any whole-file buffering would show) and is
       set by `SHORTEND_RSS_TEST_GB`; run with 20 on a machine with ≥ 60 GB free.
       *Measured: 39 MB peak at 4 GB and at 10 GB.*
-- [ ] CI green on Linux, macOS, Windows (privileged job on Linux). *Workflow written
-      (`.github/workflows/ci.yml`); not yet run — no remote yet, and the dev VM could not
-      download macOS/Windows targets, so those platform modules are unverified by a compiler.*
+- [x] CI green on Linux, macOS, Windows (privileged job on Linux). *github.com/SudoTrashTemp/Shortend,
+      two consecutive green runs on commit a61f57e (Ubuntu/macOS/Windows tests incl. 25× SIGKILL+resume,
+      linux-devices, memory-bound 39 MB at 4 GB). Test results are posted as check annotations.*
 
 **M1 implementation notes** (deviations and decisions made while building):
 - Job state is `job.toml` (human-readable header) plus `snapshot.json` (the file list), so
@@ -736,7 +737,7 @@ Before any M2 feature work: push to GitHub, get CI green on Linux/macOS/Windows 
 device-mapper unplug tests, and fix what it finds.
 
 Done when:
-- [ ] CI green on all three platforms and the privileged Linux job (carried from M1).
+- [x] CI green on all three platforms and the privileged Linux job (carried from M1).
 - [ ] Stall watchdog: a test with a destination whose writes block (FUSE or dm `delay`/
       suspended target) marks it `DestinationStalled` within the timeout, the other
       destination completes, and the job reports it; exit code 1.
