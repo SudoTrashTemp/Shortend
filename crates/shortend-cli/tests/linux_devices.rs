@@ -355,7 +355,7 @@ fn tree(root: &Path) -> BTreeMap<String, (String, u64, SystemTime)> {
         for e in rd.flatten() {
             let p = e.path();
             let rel = p.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-            if rel == "_ShortEnd" {
+            if rel == "_ShortEnd" || rel == "ascmhl" {
                 continue;
             }
             let m = std::fs::symlink_metadata(&p).unwrap();

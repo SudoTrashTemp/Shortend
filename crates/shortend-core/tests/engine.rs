@@ -11,7 +11,8 @@ use std::time::{Duration, SystemTime};
 use common::*;
 use shortend_core::{CancelToken, Error, Event, FileStatus, HashAlgorithm, HashList, JobState};
 
-const SKIP: &[&str] = &["_ShortEnd"];
+/// Written by ShortEnd next to the copied media (reports, ASC MHL history).
+const SKIP: &[&str] = &["_ShortEnd", "ascmhl"];
 
 fn atimes(root: &Path) -> BTreeMap<String, SystemTime> {
     walk(root)
@@ -82,7 +83,7 @@ fn offload_to_three_destinations_verifies_everything() {
             .flatten()
             .map(|e| e.path())
             .collect();
-        assert_eq!(reports.len(), 2, "csv + txt");
+        assert_eq!(reports.len(), 3, "csv + txt + pdf");
         let csv = reports
             .iter()
             .find(|p| p.extension().unwrap() == "csv")

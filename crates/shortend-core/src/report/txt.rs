@@ -16,7 +16,14 @@ pub fn render(rep: &JobReport) -> String {
     let _ = writeln!(s, "=======================");
     let verdict = match rep.state {
         JobState::Completed => {
-            format!("PASS - all {n_files} files verified on all {n_dest} destinations")
+            format!(
+                "PASS - all {n_files} files verified on {}",
+                if n_dest == 1 {
+                    "the destination".to_owned()
+                } else {
+                    format!("all {n_dest} destinations")
+                }
+            )
         }
         _ => format!(
             "FAIL - {failed} of {n_files} files not verified on every destination ({})",

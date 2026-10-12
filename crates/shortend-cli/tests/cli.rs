@@ -87,7 +87,7 @@ fn tree(root: &Path) -> BTreeMap<String, (String, u64)> {
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
-            if rel == "_ShortEnd" {
+            if rel == "_ShortEnd" || rel == "ascmhl" {
                 continue;
             }
             let m = std::fs::symlink_metadata(&p).unwrap();
@@ -215,6 +215,42 @@ fn corruption_on_one_destination_is_detected_and_exits_1() {
             .unwrap()
             .contains("Result:       FAIL")
     );
+}
+
+#[test]
+fn verify_command_exit_codes() {
+    let env = Env::new();
+    write(&env.path("CARD/a.mov"), &noise(50_000, 1));
+    write(&env.path("CARD/b/c.wav"), &noise(5_000, 2));
+    env.mkdirs(&["out", "plain"]);
+    let o = env
+        .cmd()
+        .args(["copy", "--operator", "Jane", "-s"])
+        .arg(env.path("CARD"))
+        .arg("-d")
+        .arg(env.path("out"))
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    let target = env.path("out/CARD");
+    assert!(String::from_utf8_lossy(&o.stdout).contains("manifest"));
+
+    let o = env.cmd().arg("verify").arg(&target).output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("2 verified"));
+
+    write(&target.join("a.mov"), &noise(50_000, 99));
+    let o = env.cmd().arg("verify").arg(&target).output().unwrap();
+    assert_eq!(o.status.code(), Some(1), "{}", ok(&o));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("MISMATCH  a.mov"));
+
+    let o = env
+        .cmd()
+        .arg("verify")
+        .arg(env.path("plain"))
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2), "{}", ok(&o));
 }
 
 /// A destination whose writer hangs (a drive that stops answering) is given up on after the

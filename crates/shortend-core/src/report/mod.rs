@@ -3,6 +3,7 @@
 
 mod csv;
 pub mod mhl;
+mod pdf;
 mod txt;
 
 use std::path::{Path, PathBuf};
@@ -20,19 +21,24 @@ use crate::model::{Failure, FileStatus, JobReport};
 pub fn write_all(rep: &JobReport, state_dir: &Path) -> (Vec<PathBuf>, Vec<String>) {
     let opts = &rep.job.settings.reports;
     let mut rendered: Vec<(&str, Vec<u8>)> = Vec::new();
+    let mut warnings = Vec::new();
     if opts.csv {
         match csv::render(rep) {
             Ok(b) => rendered.push(("csv", b)),
-            Err(e) => {
-                return (
-                    Vec::new(),
-                    vec![format!("could not build the CSV report: {e}")],
-                );
-            }
+            Err(e) => warnings.push(format!("could not build the CSV report: {e}")),
         }
     }
     if opts.txt {
         rendered.push(("txt", txt::render(rep).into_bytes()));
+    }
+    if opts.pdf.is_some() {
+        match pdf::render(rep) {
+            Ok((b, w)) => {
+                rendered.push(("pdf", b));
+                warnings.extend(w);
+            }
+            Err(e) => warnings.push(format!("could not build the PDF report: {e}")),
+        }
     }
 
     let base = base_name(rep);
@@ -50,7 +56,6 @@ pub fn write_all(rep: &JobReport, state_dir: &Path) -> (Vec<PathBuf>, Vec<String
     places.push(state_dir.to_path_buf());
 
     let mut written = Vec::new();
-    let mut warnings = Vec::new();
     for dir in places {
         for (ext, bytes) in &rendered {
             let path = dir.join(format!("{base}.{ext}"));

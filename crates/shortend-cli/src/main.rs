@@ -324,8 +324,11 @@ fn print_summary(r: &JobReport) -> ExitCode {
     println!();
     match r.state {
         JobState::Completed => println!(
-            "PASS  {n} files verified on {} destinations in {}",
-            r.job.destinations.len(),
+            "PASS  {n} files verified on {} in {}",
+            match r.job.destinations.len() {
+                1 => "1 destination".to_owned(),
+                k => format!("{k} destinations"),
+            },
             human_duration(elapsed)
         ),
         JobState::CompletedWithFailures => println!(
