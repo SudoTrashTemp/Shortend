@@ -256,14 +256,18 @@ fn sigkill_at_random_points_then_resume() {
     assert!(o.status.success(), "{}", ok(&o));
     let full = t0.elapsed().as_millis().max(50) as u64;
 
-    let mut mid_copy = 0;
+    let total_bytes: u64 = source.values().map(|(_, size)| size).sum();
+
+    // Even iterations kill on observed progress (a seeded fraction of the bytes written to the
+    // two destinations, staging included), so they land mid-copy on any machine speed. Odd
+    // iterations kill after a seeded delay over the whole run, covering planning, startup and
+    // the report/commit tail.
+    let mut resumed = 0;
     let mut rng = 0x2545_F491_4F6C_DD1Du64;
     for it in 0..iterations {
         rng ^= rng << 13;
         rng ^= rng >> 7;
         rng ^= rng << 17;
-        // Mostly within the copy itself (planning is the first ~10 %), some just past the end.
-        let delay = full / 10 + rng % full;
         let (d1, d2) = (env.path(&format!("k{it}/a")), env.path(&format!("k{it}/b")));
         std::fs::create_dir_all(&d1).unwrap();
         std::fs::create_dir_all(&d2).unwrap();
@@ -273,7 +277,22 @@ fn sigkill_at_random_points_then_resume() {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        std::thread::sleep(Duration::from_millis(delay));
+        let trigger = if it % 2 == 0 {
+            let fraction = 5 + rng % 90; // percent
+            let target = 2 * total_bytes * fraction / 100;
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while bytes_under(&d1) + bytes_under(&d2) < target
+                && child.try_wait().unwrap().is_none()
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            format!("after {fraction}% of bytes written")
+        } else {
+            let delay = rng % (full + full / 5);
+            std::thread::sleep(Duration::from_millis(delay));
+            format!("after {delay} ms")
+        };
         let _ = child.kill(); // SIGKILL on Unix
         let status = child.wait().unwrap();
         let mut stdout = String::new();
@@ -289,10 +308,10 @@ fn sigkill_at_random_points_then_resume() {
             .find_map(|l| l.strip_prefix("Job "))
             .map(str::to_owned)
         else {
-            // Killed while planning: planning must leave nothing behind.
+            // Killed while planning: nothing may have reached the target folder.
             assert!(
-                !d1.join("CARD").exists() && !d1.join(".shortend-staging").exists(),
-                "iteration {it}"
+                tree(&d1.join("CARD")).is_empty() && tree(&d2.join("CARD")).is_empty(),
+                "iteration {it} ({trigger}): files appeared before planning finished"
             );
             continue;
         };
@@ -306,38 +325,61 @@ fn sigkill_at_random_points_then_resume() {
             assert_eq!(
                 Some(v),
                 source.get(rel),
-                "iteration {it}: {rel} is wrong after kill"
+                "iteration {it} ({trigger}): {rel} is wrong after kill"
             );
-        }
-        if !partial.is_empty() && partial.len() < source.len() {
-            mid_copy += 1;
         }
 
         let o = env.cmd().args(["resume", &id]).output().unwrap();
         let text = ok(&o);
         if o.status.code() == Some(2) && text.contains("no job matches") {
             // Killed between printing the plan and persisting the job: nothing was copied.
-            assert!(partial.is_empty(), "iteration {it}");
+            assert!(partial.is_empty(), "iteration {it} ({trigger})");
             continue;
         }
         assert_eq!(
             o.status.code(),
             Some(0),
-            "iteration {it} (killed after {delay} ms): {text}"
+            "iteration {it} ({trigger}): {text}"
         );
-        assert_eq!(tree(&d1.join("CARD")), source, "iteration {it}");
-        assert_eq!(tree(&d2.join("CARD")), source, "iteration {it}");
-        assert!(!d1.join(".shortend-staging").exists() && !d2.join(".shortend-staging").exists());
+        resumed += 1;
+        assert_eq!(tree(&d1.join("CARD")), source, "iteration {it} ({trigger})");
+        assert_eq!(tree(&d2.join("CARD")), source, "iteration {it} ({trigger})");
+        assert!(
+            !d1.join(".shortend-staging").exists() && !d2.join(".shortend-staging").exists(),
+            "iteration {it} ({trigger}): staging left behind"
+        );
     }
-    let msg = format!("{mid_copy}/{iterations} kills landed mid-copy (baseline {full} ms)");
+    let msg = format!(
+        "{resumed}/{iterations} kills interrupted a running copy and were resumed (baseline {full} ms)"
+    );
     if std::env::var_os("GITHUB_ACTIONS").is_some() {
         println!("\n::notice title=sigkill-resume::{msg}");
     }
     eprintln!("{msg}");
+    // Every progress-triggered kill (half the iterations) should need a resume.
     assert!(
-        mid_copy * 5 >= iterations,
-        "too few kills landed mid-copy ({mid_copy}/{iterations}); timing is off"
+        resumed * 5 >= iterations * 2,
+        "too few kills interrupted a running copy ({resumed}/{iterations})"
     );
+}
+
+/// Bytes in all regular files under `root`, including `.part` files in staging.
+fn bytes_under(root: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            match e.metadata() {
+                Ok(m) if m.is_dir() => stack.push(e.path()),
+                Ok(m) => total += m.len(),
+                Err(_) => {}
+            }
+        }
+    }
+    total
 }
 
 /// Peak RSS stays bounded for a large single file. Size from SHORTEND_RSS_TEST_GB (default 4).
