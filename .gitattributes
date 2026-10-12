@@ -1,0 +1,2 @@
+# Fixture bytes are hashed; never let git rewrite line endings.
+crates/shortend-core/tests/fixtures/** -text

@@ -2,6 +2,7 @@
 //! destination and into the job's state directory.
 
 mod csv;
+pub mod mhl;
 mod txt;
 
 use std::path::{Path, PathBuf};

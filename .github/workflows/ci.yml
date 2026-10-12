@@ -22,6 +22,16 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install reference manifest tools
+        shell: bash
+        run: |
+          pip install "ascmhl==1.2" "mhl-suite==1.3.1"
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y libxml2-utils; fi
+          # Windows has no xmllint; everything else must be present so no check is skipped.
+          if [ "$RUNNER_OS" != "Windows" ]; then echo "SHORTEND_REQUIRE_TOOLS=1" >> "$GITHUB_ENV"; fi
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check

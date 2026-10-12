@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hashlist version="1.1">
+  <creatorinfo>
+    <username>ref</username>
+    <hostname>ref</hostname>
+    <tool>handwritten</tool>
+    <startdate>2020-01-01T00:00:00Z</startdate>
+    <finishdate>2020-01-01T00:00:00Z</finishdate>
+  </creatorinfo>
+  <hash>
+    <file>README.txt</file>
+    <size>10</size>
+    <lastmodificationdate>2020-01-01T00:00:00Z</lastmodificationdate>
+    <xxhash64>5aaf8e2777956af1</xxhash64>
+    <md5>2ac8cd38394b295cf376f7757f887e64</md5>
+    <hashdate>2020-01-01T00:00:00Z</hashdate>
+  </hash>
+  <hash>
+    <file>SOUND/T001.wav</file>
+    <size>9</size>
+    <lastmodificationdate>2020-01-01T00:00:00Z</lastmodificationdate>
+    <xxhash64>7aba325df1dd4283</xxhash64>
+    <md5>8736b2bd009ed3f2ac1ad7f25524174c</md5>
+    <hashdate>2020-01-01T00:00:00Z</hashdate>
+  </hash>
+</hashlist>

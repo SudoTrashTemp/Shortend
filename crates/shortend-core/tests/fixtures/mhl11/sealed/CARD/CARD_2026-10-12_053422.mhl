@@ -1,0 +1,53 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<hashlist version="1.1">
+  <creationdate>2026-10-12T05:34:22Z</creationdate>
+  <creatorinfo>
+    <username>root</username>
+    <hostname>vm</hostname>
+    <tool>simple-mhl 1.3.1</tool>
+    <startdate>2026-10-12T05:34:22Z</startdate>
+    <finishdate>2026-10-12T05:34:22Z</finishdate>
+  </creatorinfo>
+  <hash>
+    <file>README.txt</file>
+    <size>10</size>
+    <lastmodificationdate>2026-10-12T05:34:22Z</lastmodificationdate>
+    <xxhash64be>f16a9577278eaf5a</xxhash64be>
+    <hashdate>2026-10-12T05:34:22Z</hashdate>
+  </hash>
+  <hash>
+    <file>CLIP/A001C001.xml</file>
+    <size>11</size>
+    <lastmodificationdate>2026-10-12T05:34:22Z</lastmodificationdate>
+    <xxhash64be>edc46e0f46f90a63</xxhash64be>
+    <hashdate>2026-10-12T05:34:22Z</hashdate>
+  </hash>
+  <hash>
+    <file>CLIP/A001C001_RDC/A001C001_001.R3D</file>
+    <size>9</size>
+    <lastmodificationdate>2026-10-12T05:34:22Z</lastmodificationdate>
+    <xxhash64be>e54f68576de09468</xxhash64be>
+    <hashdate>2026-10-12T05:34:22Z</hashdate>
+  </hash>
+  <hash>
+    <file>CLIP/A001C001_RDC/A001C001_002.R3D</file>
+    <size>19</size>
+    <lastmodificationdate>2026-10-12T05:34:22Z</lastmodificationdate>
+    <xxhash64be>6ef46f2994977321</xxhash64be>
+    <hashdate>2026-10-12T05:34:22Z</hashdate>
+  </hash>
+  <hash>
+    <file>SOUND/T001.wav</file>
+    <size>9</size>
+    <lastmodificationdate>2026-10-12T05:34:22Z</lastmodificationdate>
+    <xxhash64be>8342ddf15d32ba7a</xxhash64be>
+    <hashdate>2026-10-12T05:34:22Z</hashdate>
+  </hash>
+  <hash>
+    <file>Ünïcödé dir/名前 &amp; x.txt</file>
+    <size>22</size>
+    <lastmodificationdate>2026-10-12T05:34:22Z</lastmodificationdate>
+    <xxhash64be>703e51e8b30488b1</xxhash64be>
+    <hashdate>2026-10-12T05:34:22Z</hashdate>
+  </hash>
+</hashlist>

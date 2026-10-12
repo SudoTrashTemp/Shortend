@@ -9,10 +9,11 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
+use shortend_core::report::mhl::{self, MhlVersion};
 use shortend_core::report::{human_bytes, human_duration, human_rate};
 use shortend_core::{
     CancelToken, Error, Event, FileStatus, HashAlgorithm, HashList, Job, JobReport, JobSettings,
-    JobSpec, JobState, ProductionInfo, ReportOptions,
+    JobSpec, JobState, PdfOptions, ProductionInfo, ReportOptions,
 };
 
 const EXIT_FAILED: u8 = 1;
@@ -34,7 +35,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Copy a card or folder to one or more destinations and verify every copy.
-    Copy(CopyArgs),
+    Copy(Box<CopyArgs>),
     /// Continue an interrupted job. Files already verified are skipped.
     Resume {
         /// Job ID, or a unique prefix of it (see `shortend jobs`).
@@ -42,6 +43,12 @@ enum Cmd {
     },
     /// List jobs and their state.
     Jobs,
+    /// Check a folder against its manifest: an ASC MHL history (`ascmhl/`) or MHL v1.1 files.
+    /// Read-only.
+    Verify {
+        /// The offload folder (the one containing `ascmhl/` or the `.mhl` file).
+        dir: PathBuf,
+    },
 }
 
 #[derive(Args)]
@@ -75,6 +82,17 @@ struct CopyArgs {
     /// Don't write the TXT report.
     #[arg(long)]
     no_txt: bool,
+    /// Manifest written into every destination: v2 (ASC MHL), v1.1, or none.
+    #[arg(long, default_value = "v2", value_parser = ["v2", "v1.1", "none"])]
+    mhl: String,
+    /// Don't write the PDF report.
+    #[arg(long)]
+    no_pdf: bool,
+    /// Logo (PNG or JPEG) for the PDF report.
+    #[arg(long, value_name = "FILE")]
+    logo: Option<PathBuf>,
+    #[command(flatten)]
+    production: ProductionArgs,
     /// Give up on a destination after this many seconds without progress (0 = never).
     #[arg(long, default_value = "60", value_name = "SECS")]
     stall_timeout: u32,
@@ -83,12 +101,35 @@ struct CopyArgs {
     chunk_mib: u32,
 }
 
+/// Production details shown in the reports and written into the manifest.
+#[derive(Args)]
+struct ProductionArgs {
+    #[arg(long, help_heading = "Production")]
+    show: Option<String>,
+    #[arg(long, help_heading = "Production")]
+    episode: Option<String>,
+    /// Shoot day.
+    #[arg(long, help_heading = "Production")]
+    day: Option<String>,
+    /// Camera roll.
+    #[arg(long, help_heading = "Production")]
+    camroll: Option<String>,
+    /// DIT / operator name.
+    #[arg(long, help_heading = "Production")]
+    operator: Option<String>,
+    #[arg(long, help_heading = "Production")]
+    company: Option<String>,
+    #[arg(long, help_heading = "Production")]
+    notes: Option<String>,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Copy(args) => copy(args),
+        Cmd::Copy(args) => copy(*args),
         Cmd::Resume { job } => resume(&job),
         Cmd::Jobs => jobs(),
+        Cmd::Verify { dir } => verify(&dir),
     };
     match result {
         Ok(code) => code,
@@ -139,10 +180,24 @@ fn copy(a: CopyArgs) -> shortend_core::Result<ExitCode> {
             reports: ReportOptions {
                 csv: !a.no_csv,
                 txt: !a.no_txt,
+                mhl: match a.mhl.as_str() {
+                    "v1.1" => Some(MhlVersion::V1_1),
+                    "none" => None,
+                    _ => Some(MhlVersion::V2),
+                },
+                pdf: (!a.no_pdf).then_some(PdfOptions { logo: a.logo }),
             },
             ..JobSettings::default()
         },
-        production: ProductionInfo::default(),
+        production: ProductionInfo {
+            show: a.production.show,
+            episode: a.production.episode,
+            shoot_day: a.production.day,
+            camroll: a.production.camroll,
+            operator: a.production.operator,
+            company: a.production.company,
+            notes: a.production.notes,
+        },
     };
     let job = shortend_core::plan(spec)?;
     print_plan(&job);
@@ -296,6 +351,12 @@ fn print_summary(r: &JobReport) -> ExitCode {
             human_rate(st.bytes_written, elapsed)
         );
     }
+    for issue in &r.manifest_issues {
+        println!("  MANIFEST  {issue}");
+    }
+    for m in &r.manifests {
+        println!("  manifest {}", m.display());
+    }
     for f in &r.report_files {
         println!("  report  {}", f.display());
     }
@@ -303,6 +364,36 @@ fn print_summary(r: &JobReport) -> ExitCode {
         JobState::Completed => 0,
         JobState::CompletedWithFailures | JobState::Aborted => EXIT_FAILED,
         JobState::Cancelled => EXIT_CANCELLED,
+    })
+}
+
+fn verify(dir: &std::path::Path) -> shortend_core::Result<ExitCode> {
+    let reports = match mhl::verify_folder(dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(ExitCode::from(EXIT_REFUSED));
+        }
+    };
+    let mut ok = true;
+    for r in &reports {
+        let kind = match r.kind {
+            mhl::ManifestKind::AscMhlV2 => "ASC MHL",
+            mhl::ManifestKind::MhlV11 => "MHL v1.1",
+        };
+        println!("{kind}  {}", r.manifest.display());
+        for issue in &r.issues {
+            println!("  {issue}");
+        }
+        println!("  {} verified, {} problem(s)", r.verified, r.issues.len());
+        ok &= r.ok();
+    }
+    println!();
+    println!("{}", if ok { "PASS" } else { "FAIL" });
+    Ok(if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(EXIT_FAILED)
     })
 }
 

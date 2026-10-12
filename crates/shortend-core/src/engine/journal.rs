@@ -4,7 +4,7 @@
 //! at the end of the job. Losing the tail after a crash is safe: resume re-proves anything a
 //! missing record would have claimed (see PLAN.md §4.6).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -39,6 +39,12 @@ pub enum Record {
     DestFailed {
         dest: DestId,
         failure: Failure,
+    },
+    /// A manifest generation was written to `dest` (ASC MHL: the history's chain file was
+    /// extended, so it legitimately differs from the card's copy).
+    Mhl {
+        dest: DestId,
+        file: String,
     },
     End {
         at: Timestamp,
@@ -83,6 +89,8 @@ impl Journal {
 #[derive(Debug, Default)]
 pub struct Replay {
     pub src: HashMap<RelPath, Digests>,
+    /// Destinations that already received a manifest from this job.
+    pub mhl: HashSet<DestId>,
     pub commits: HashMap<(RelPath, DestId), Digests>,
     pub last_state: Option<JobState>,
 }
@@ -108,6 +116,9 @@ pub fn replay(path: &Path) -> std::io::Result<Replay> {
                 out.commits.insert((rel, dest), digests);
             }
             Record::DestFailed { .. } => {}
+            Record::Mhl { dest, .. } => {
+                out.mhl.insert(dest);
+            }
             Record::End { state, .. } => out.last_state = Some(state),
         }
     }

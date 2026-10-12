@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ascmhldirectory xmlns="urn:ASC:MHL:DIRECTORY:v2.0">
+  <hashlist sequencenr="1">
+    <path>0001_CARD_2026-10-12_053420Z.mhl</path>
+    <c4>c45Fxb7U7wmNzmPLjenyMFVFHYUQ1CAUt5EK2C5HMPuVopvrTn27pHifaszZ4voRjFSG7pQuFX8mE6fUbQjsQoDABh</c4>
+  </hashlist>
+  <hashlist sequencenr="2">
+    <path>0002_CARD_2026-10-12_053422Z.mhl</path>
+    <c4>c43eGch2hX3iGnS45NMAxLeghSGUQruVyyH9iRUg8HnMMSvTGPHTxh2T3Yyt6hww3CY9schGBy7yP2D9fPUCGjmBNh</c4>
+  </hashlist>
+</ascmhldirectory>

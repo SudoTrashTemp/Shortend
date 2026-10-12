@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hashlist version="2.0" xmlns="urn:ASC:MHL:v2.0">
+  <creatorinfo>
+    <creationdate>2026-10-11T22:34:20-07:00</creationdate>
+    <hostname>vm</hostname>
+    <tool version="1.2">ascmhl</tool>
+    <author>Reference</author>
+  </creatorinfo>
+  <processinfo>
+    <process>in-place</process>
+    <roothash>
+      <content>
+        <c4 hashdate="2026-10-11T22:34:20.275316-07:00">c42HqBJQN6KT2ZmGiaLVKTUZhqWwHYNGL48R2DmMaZ3ygovdVmp6eMxMcrDa4natd57QKZ2KcBea2CpGLsFPkZFiwk</c4>
+      </content>
+      <structure>
+        <c4 hashdate="2026-10-11T22:34:20.275316-07:00">c44rpS5B7RmqpECyvgwQzzsipCHtK4oBmtYzis1kp4xWCg3JTjka26qX7acuVurvWGLDhdEJrJdZzSR5uoBEaNawCf</c4>
+      </structure>
+    </roothash>
+    <ignore>
+      <pattern>.DS_Store</pattern>
+      <pattern>ascmhl</pattern>
+      <pattern>ascmhl/</pattern>
+    </ignore>
+  </processinfo>
+  <hashes>
+    <hash>
+      <path size="9" lastmodificationdate="2026-10-11T22:34:20-07:00">CLIP/A001C001_RDC/A001C001_001.R3D</path>
+      <c4 action="original" hashdate="2026-10-11T22:34:20.273129-07:00">c45KA6ZbRHKpLx7kuig1wQhqJsSucHh3cSrz8rYn2as6PbBtcaGJpXMwRwN2VrXqzVuphrinCXcxjcUqGk4UuTXn4h</c4>
+    </hash>
+    <hash>
+      <path size="19" lastmodificationdate="2026-10-11T22:34:20-07:00">CLIP/A001C001_RDC/A001C001_002.R3D</path>
+      <c4 action="original" hashdate="2026-10-11T22:34:20.273405-07:00">c42ZHGLx5ihRp6P1jgY25J4uNoUrmnJTg35VkkCUjocR1sKNguBP75FSLyZedEwqjSdTjW1cVv7J3UUtpzdpK2AnmS</c4>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:20-07:00">CLIP/A001C001_RDC</path>
+      <content>
+        <c4 hashdate="2026-10-11T22:34:20.273698-07:00">c44dFZ8cP498t5JeVPg74HFxcH3kZtDM7timsbCT9YLENc9Z1qPkAfZWiMai2fa8tJQ1qDnLavLxshPD5tkXEcwtz5</c4>
+      </content>
+      <structure>
+        <c4 hashdate="2026-10-11T22:34:20.273698-07:00">c45sbKZ4dbRZXUQcnZWF9YnhiSbGhjJrxGMVykbkjAXcsQeA7bxm4H9XspEjWwVfBdUQvsTmwyZWbmEVTH1Y3yjL5p</c4>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="11" lastmodificationdate="2026-10-11T22:34:20-07:00">CLIP/A001C001.xml</path>
+      <c4 action="original" hashdate="2026-10-11T22:34:20.273799-07:00">c42PFmRiecwQhEEZmPEuQCbb4tdDntY3ded5T1iuYvBmrAvyxNeqbNkJ9KaSiW9cc7D3fwJYe3aKLkvHvuPJ7jrdaD</c4>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:20-07:00">CLIP</path>
+      <content>
+        <c4 hashdate="2026-10-11T22:34:20.274080-07:00">c42qHUMm7GZEPyzybuuBHPSKwKu8vZ2MVZAAX8scUjSzErodRU1WEkbqiGAyFfYwmVuyPgBXim94RUgbwvTsvtUsfF</c4>
+      </content>
+      <structure>
+        <c4 hashdate="2026-10-11T22:34:20.274080-07:00">c45ELBYaxr6MspzBjq2Y8eX6RPNnGLTNL8cr8dMm1Kca173V1mRpyPzfto3Ga1SD8LVfeVuL1whKhsEKBYTMFoag21</c4>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="9" lastmodificationdate="2026-10-11T22:34:20-07:00">SOUND/T001.wav</path>
+      <c4 action="original" hashdate="2026-10-11T22:34:20.274257-07:00">c41YLUi8VB2HAAsBcNAJhYZEScb1nFViyDmU9M9CY4abRhAb7FJqDafc7zoq3XMUmzNtrpR3xiAPpFCgihyemaDkrm</c4>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:20-07:00">SOUND</path>
+      <content>
+        <c4 hashdate="2026-10-11T22:34:20.274431-07:00">c442ohkmug83ZPKE4krDGs3KYvQwHvagbYEbn6eWurqF3stNohUkBp1uxJRXAhvfnRTuU2jwdEczqN8zi1KQHkbNmJ</c4>
+      </content>
+      <structure>
+        <c4 hashdate="2026-10-11T22:34:20.274431-07:00">c424rZC7LgK7UqeFPdcFnJm2ykSszJmNRsGWA8BDMLJRWNuh42UKTCqSiYLKQ4sfChw6xeo1UgLfxy3R6UVYkd8qvd</c4>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="22" lastmodificationdate="2026-10-11T22:34:20-07:00">Ünïcödé dir/名前 &amp; x.txt</path>
+      <c4 action="original" hashdate="2026-10-11T22:34:20.274560-07:00">c42KTCR9tesE8snQsCkbL2TmyDTkArWTvvFCkuEKzprpS1tkMCYNusMY7Jfh8h9t3cxQptnTPq7U6HtrZg1Escf1bu</c4>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:20-07:00">Ünïcödé dir</path>
+      <content>
+        <c4 hashdate="2026-10-11T22:34:20.274775-07:00">c41Nz1poCUDASeBLMSdhQWwr156KngAQzpW1CL6MMoVKerrHCfY1YFRZ13czhYJRQNKQdNsWak15bH76MVQug9fUu2</c4>
+      </content>
+      <structure>
+        <c4 hashdate="2026-10-11T22:34:20.274775-07:00">c42eQ99ssZRFf36VKsVA41hdShcEfZYj2bpzAFdJES3UWmQCv7dcATtss2Ukbvi6XvN2DTDGYaVDoPGdmzzLdBzEgr</c4>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="10" lastmodificationdate="2026-10-11T22:34:20-07:00">README.txt</path>
+      <c4 action="original" hashdate="2026-10-11T22:34:20.274915-07:00">c43biustAebrTxNssasRVnxC48aCBuZyL7qzW3zPZ4yBnhM1quNg1eYEfXbXssXRYaxCAT5WX72FDWcVpoQW4p1M8q</c4>
+    </hash>
+  </hashes>
+</hashlist>

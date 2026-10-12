@@ -1,6 +1,7 @@
 //! Job lifecycle: plan → run (or resume) → reports.
 
 pub mod journal;
+mod manifests;
 mod pipeline;
 pub mod preflight;
 pub mod state;
@@ -135,6 +136,8 @@ fn finish(
         outcomes: out.outcomes,
         dest_stats: out.dest_stats,
         warnings: out.warnings,
+        manifest_issues: Vec::new(),
+        manifests: Vec::new(),
         report_files: Vec::new(),
     };
     // Reports describe a finished job; a cancelled or aborted one gets them when resumed.
@@ -142,6 +145,14 @@ fn finish(
         rep.state,
         JobState::Completed | JobState::CompletedWithFailures
     ) {
+        let before = rep.warnings.len();
+        manifests::write(&mut rep, journal, replay);
+        for w in &rep.warnings[before..] {
+            let _ = events.send(Event::Warning(w.clone()));
+        }
+        for m in &rep.manifests {
+            let _ = events.send(Event::ReportWritten(m.clone()));
+        }
         let (files, warnings) = report::write_all(&rep, dir);
         for w in warnings {
             let _ = events.send(Event::Warning(w.clone()));

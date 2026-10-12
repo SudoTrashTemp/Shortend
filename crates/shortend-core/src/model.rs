@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs::{RelPath, VolumeInfo};
 use crate::hash::{Digests, HashList};
+use crate::report::mhl::MhlVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -85,6 +86,20 @@ pub struct Destination {
 pub struct ReportOptions {
     pub csv: bool,
     pub txt: bool,
+    /// Manifest written into every destination's target folder. `None` writes none.
+    #[serde(default = "default_mhl")]
+    pub mhl: Option<MhlVersion>,
+    /// PDF report. `None` writes none.
+    #[serde(default = "default_pdf")]
+    pub pdf: Option<PdfOptions>,
+}
+
+fn default_mhl() -> Option<MhlVersion> {
+    Some(MhlVersion::V2)
+}
+
+fn default_pdf() -> Option<PdfOptions> {
+    Some(PdfOptions::default())
 }
 
 impl Default for ReportOptions {
@@ -92,8 +107,17 @@ impl Default for ReportOptions {
         Self {
             csv: true,
             txt: true,
+            mhl: default_mhl(),
+            pdf: default_pdf(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PdfOptions {
+    /// PNG or JPEG shown at the top of the first page.
+    pub logo: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +240,12 @@ pub enum Failure {
         first: Digests,
         second: Digests,
     },
+    /// The file differs from what the card's own ASC MHL history recorded for it. The copy is
+    /// faithful to the card, but the card no longer matches its manifest.
+    SourceManifestMismatch {
+        recorded: String,
+        actual: Digests,
+    },
     /// The source volume disappeared or failed; the job stops and can be resumed.
     SourceUnavailable,
     /// The destination volume disappeared, was replaced, or failed with an I/O error.
@@ -258,6 +288,10 @@ impl fmt::Display for Failure {
             Self::SourceReread { first, second } => {
                 write!(f, "source re-read differs: first {first}, second {second}")
             }
+            Self::SourceManifestMismatch { recorded, actual } => write!(
+                f,
+                "card does not match its own ASC MHL (recorded {recorded}, card has {actual})"
+            ),
             Self::SourceUnavailable => f.write_str("source unavailable (removed or failing)"),
             Self::DestinationStalled { seconds } => {
                 write!(f, "destination stalled (no progress for {seconds} s)")
@@ -354,6 +388,11 @@ pub struct JobReport {
     /// One entry per destination, same order as `job.destinations`.
     pub dest_stats: Vec<DestStats>,
     pub warnings: Vec<String>,
+    /// Problems between the card and its own ASC MHL history (e.g. files the history lists
+    /// that are missing from the card). Any entry fails the job.
+    pub manifest_issues: Vec<String>,
+    /// MHL files written (one per destination).
+    pub manifests: Vec<PathBuf>,
     pub report_files: Vec<PathBuf>,
 }
 

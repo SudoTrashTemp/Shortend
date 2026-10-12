@@ -23,7 +23,7 @@ const FAT_MAX_FILE: u64 = (4 << 30) - 1;
 /// Cap on listed naming problems so a broken card doesn't print 40,000 lines.
 const MAX_LISTED: usize = 20;
 
-pub fn plan(spec: JobSpec) -> Result<Job> {
+pub fn plan(mut spec: JobSpec) -> Result<Job> {
     let refuse = |msg: String| Error::Preflight(vec![msg]);
     let mut problems = Vec::new();
     let mut warnings = Vec::new();
@@ -63,6 +63,9 @@ pub fn plan(spec: JobSpec) -> Result<Job> {
             "source contains a top-level '{REPORT_DIR}' entry, which ShortEnd reserves for reports"
         ));
     }
+
+    // --- manifests ---------------------------------------------------------------------------
+    check_manifest_options(&src_root, &found, &mut spec, &mut problems, &mut warnings);
 
     // --- destinations ----------------------------------------------------------------------
     if spec.destinations.is_empty() {
@@ -336,5 +339,80 @@ fn reidentify(path: &Path, vol: &mut VolumeInfo) -> bool {
             }
             _ => false,
         },
+    }
+}
+
+/// Checksum/manifest compatibility, and an existing ASC MHL history on the card: its chain must
+/// verify, and every algorithm it uses is added to the job so the new generation can verify
+/// against it (computed in the same read pass).
+fn check_manifest_options(
+    src_root: &Path,
+    found: &Scan,
+    spec: &mut JobSpec,
+    problems: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    use crate::hash::{HashAlgorithm, HashList};
+    use crate::report::mhl::{MhlVersion, v2};
+
+    let Some(version) = spec.settings.reports.mhl else {
+        return;
+    };
+    let hashes = spec.settings.hashes.as_slice().to_vec();
+    let (written, dropped): (Vec<HashAlgorithm>, Vec<HashAlgorithm>) =
+        hashes.iter().partition(|a| version.supports(**a));
+    if written.is_empty() {
+        let names: Vec<String> = hashes.iter().map(ToString::to_string).collect();
+        problems.push(format!(
+            "{version} cannot record {} (it supports {}); choose another checksum or turn the manifest off",
+            names.join("+"),
+            match version {
+                MhlVersion::V2 => "c4, md5, sha1, xxh128, xxh3, xxh64",
+                MhlVersion::V1_1 => "md5, sha1, xxh64",
+            }
+        ));
+        return;
+    }
+    for a in dropped {
+        warnings.push(format!(
+            "{a} checksums appear in the reports but cannot be written to {version}"
+        ));
+    }
+
+    if version != MhlVersion::V2 {
+        return;
+    }
+    let nested = found
+        .dirs
+        .iter()
+        .filter(|d| d.file_name() == v2::FOLDER && d.as_str() != v2::FOLDER)
+        .count();
+    if nested > 0 {
+        warnings.push(format!(
+            "{nested} nested ASC MHL histories on the card are copied as files but not extended"
+        ));
+    }
+    match v2::History::load(src_root) {
+        Ok(None) => {}
+        Ok(Some(h)) => {
+            let mut list = hashes.clone();
+            let mut added = Vec::new();
+            for a in h.algorithms() {
+                if !list.contains(&a) {
+                    list.push(a);
+                    added.push(a.to_string());
+                }
+            }
+            if !added.is_empty() {
+                warnings.push(format!(
+                    "the card's ASC MHL history uses {}; also computing it so the new generation can verify against the history",
+                    added.join(", ")
+                ));
+                spec.settings.hashes = HashList::new(list).expect("non-empty, unique");
+            }
+        }
+        Err(e) => problems.push(format!(
+            "the card's ASC MHL history cannot be trusted: {e}. Offload without a manifest (--mhl none) or repair the history first"
+        )),
     }
 }

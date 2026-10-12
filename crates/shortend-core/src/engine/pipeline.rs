@@ -486,6 +486,11 @@ fn reconcile(ctx: &Ctx, entry: &FileEntry, o: &mut FileOutcome, replay: &Replay)
                 match hash_path(&final_path, hashes, &ctx.cancel, |n| {
                     ctx.verified_bytes[d.dest.index()].fetch_add(n, Ordering::Relaxed);
                 }) {
+                    // The card's ASC MHL chain file, which this job's manifest extended.
+                    Ok(_) if replay.mhl.contains(&d.dest) && is_chain_file(entry) => {
+                        d.status = FileStatus::AlreadyVerified;
+                        d.verified = Some(s.clone());
+                    }
                     Ok(v) if &v == s && final_matches(&final_path, entry, dest) => {
                         if committed != Some(&v) {
                             ctx.record(&Record::Commit {
@@ -507,6 +512,15 @@ fn reconcile(ctx: &Ctx, entry: &FileEntry, o: &mut FileOutcome, replay: &Replay)
     o.dests
         .iter()
         .all(|d| d.status == FileStatus::AlreadyVerified)
+}
+
+fn is_chain_file(entry: &FileEntry) -> bool {
+    entry.rel.as_str()
+        == format!(
+            "{}/{}",
+            crate::report::mhl::v2::FOLDER,
+            crate::report::mhl::v2::CHAIN_FILE
+        )
 }
 
 /// Removes a file at a final path that this job cannot prove it verified. It can only be ours:

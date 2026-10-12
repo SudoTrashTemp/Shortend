@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hashlist version="2.0" xmlns="urn:ASC:MHL:v2.0">
+  <creatorinfo>
+    <creationdate>2026-10-11T22:34:18-07:00</creationdate>
+    <hostname>vm</hostname>
+    <tool version="1.2">ascmhl</tool>
+    <author>Reference</author>
+  </creatorinfo>
+  <processinfo>
+    <process>in-place</process>
+    <roothash>
+      <content>
+        <xxh128 hashdate="2026-10-11T22:34:18.261755-07:00">3284d9108d21f0c8e435c8b0003996a8</xxh128>
+      </content>
+      <structure>
+        <xxh128 hashdate="2026-10-11T22:34:18.261755-07:00">e2cb4b0f0eb58f42883eda39751be30e</xxh128>
+      </structure>
+    </roothash>
+    <ignore>
+      <pattern>.DS_Store</pattern>
+      <pattern>ascmhl</pattern>
+      <pattern>ascmhl/</pattern>
+    </ignore>
+  </processinfo>
+  <hashes>
+    <hash>
+      <path size="9" lastmodificationdate="2026-10-11T22:34:18-07:00">CLIP/A001C001_RDC/A001C001_001.R3D</path>
+      <xxh128 action="original" hashdate="2026-10-11T22:34:18.261226-07:00">c5bdbe40608e8c88efbddf94b6eb16e6</xxh128>
+    </hash>
+    <hash>
+      <path size="19" lastmodificationdate="2026-10-11T22:34:18-07:00">CLIP/A001C001_RDC/A001C001_002.R3D</path>
+      <xxh128 action="original" hashdate="2026-10-11T22:34:18.261329-07:00">d72bc250b0c9b25a0fa18995302e26df</xxh128>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:18-07:00">CLIP/A001C001_RDC</path>
+      <content>
+        <xxh128 hashdate="2026-10-11T22:34:18.261372-07:00">963b430bc5172a45b1338e8214fc0ae1</xxh128>
+      </content>
+      <structure>
+        <xxh128 hashdate="2026-10-11T22:34:18.261372-07:00">2707e55cd4a58e515f8a3195b8a5618b</xxh128>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="11" lastmodificationdate="2026-10-11T22:34:18-07:00">CLIP/A001C001.xml</path>
+      <xxh128 action="original" hashdate="2026-10-11T22:34:18.261415-07:00">496b185c76b1c98fb922b961353e8c64</xxh128>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:18-07:00">CLIP</path>
+      <content>
+        <xxh128 hashdate="2026-10-11T22:34:18.261452-07:00">a1f865c6f60401dfa57f02b845c91fba</xxh128>
+      </content>
+      <structure>
+        <xxh128 hashdate="2026-10-11T22:34:18.261452-07:00">8bf50c83f2908882d5a3996e614fad89</xxh128>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="9" lastmodificationdate="2026-10-11T22:34:18-07:00">SOUND/T001.wav</path>
+      <xxh128 action="original" hashdate="2026-10-11T22:34:18.261511-07:00">cd373f67b42d0b230f9367695aebef73</xxh128>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:18-07:00">SOUND</path>
+      <content>
+        <xxh128 hashdate="2026-10-11T22:34:18.261537-07:00">200451db1798c434759e2bdd47b54c05</xxh128>
+      </content>
+      <structure>
+        <xxh128 hashdate="2026-10-11T22:34:18.261537-07:00">df99785cc842b3495a515bef6cc04281</xxh128>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="22" lastmodificationdate="2026-10-11T22:34:18-07:00">Ünïcödé dir/名前 &amp; x.txt</path>
+      <xxh128 action="original" hashdate="2026-10-11T22:34:18.261644-07:00">f5c7c9f26e35306cf49482733fc2ef90</xxh128>
+    </hash>
+    <directoryhash>
+      <path lastmodificationdate="2026-10-11T22:34:18-07:00">Ünïcödé dir</path>
+      <content>
+        <xxh128 hashdate="2026-10-11T22:34:18.261674-07:00">901d537eb7c65be9c4311bd9a663711e</xxh128>
+      </content>
+      <structure>
+        <xxh128 hashdate="2026-10-11T22:34:18.261674-07:00">99dd262c9a9c29048cd0646a2506a0fa</xxh128>
+      </structure>
+    </directoryhash>
+    <hash>
+      <path size="10" lastmodificationdate="2026-10-11T22:34:18-07:00">README.txt</path>
+      <xxh128 action="original" hashdate="2026-10-11T22:34:18.261718-07:00">167250005e9ff68fff125e2349cb10cd</xxh128>
+    </hash>
+  </hashes>
+</hashlist>
