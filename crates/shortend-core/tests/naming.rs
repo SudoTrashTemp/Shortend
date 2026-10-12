@@ -67,7 +67,12 @@ fn seq_is_unique_across_mismatched_destinations_and_concurrent_jobs() {
         let folder = format!("Big Show/A001_{:03}", r.job.seq.unwrap());
         assert_eq!(r.job.folder.as_str(), folder);
         for (d, root) in r.job.destinations.iter().zip([&a, &b]) {
-            assert_eq!(d.target, root.canonicalize().unwrap().join(&folder));
+            assert_eq!(
+                d.target,
+                shortend_core::fs::canonical_dir(root)
+                    .unwrap()
+                    .join(&folder)
+            );
             assert!(d.target.join("CLIP/A001C001_240101_R1AB.mxf").is_file());
         }
     }
