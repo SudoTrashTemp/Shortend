@@ -783,17 +783,31 @@ Done when:
 - Resume: the card's `ascmhl_chain.xml` on a destination legitimately differs from the card
   once ShortEnd has extended it, so it is not re-copied when the journal records that a
   manifest was written there. A new generation is written only if the run copied something.
-- MHL v1.1 cannot list zero-byte files (its schema requires `size ≥ 1`); they are left out
-  with a warning and remain in CSV/TXT/PDF.
+- Several manifests per job: `reports.mhl` is a list (`--mhl v2,v1.1`); v2 is the default.
+  ASC MHL v2 lists zero-byte files. MHL v1.1 cannot (its schema requires `size ≥ 1`), so
+  the omission is loud: a manifest issue in the summary, job state `CompletedWithFailures`
+  (exit 1), and the omitted files named in the CSV (detail column), TXT and PDF reports. A
+  job with v1.1 as its *only* manifest and zero-byte files on the card is refused at
+  preflight rather than writing an incomplete manifest. When both are written, v1.1 is
+  written first and its file name is added to the v2 generation's ignore list.
 - PDF fonts: DejaVu Sans/Bold/Mono (Bitstream Vera license, permissive; not OFL as planned)
   embedded and subset with `allsorts` (printpdf only subsets with its HTML layout engine,
   which would pull in a large dependency tree). A 10k-file report is ~340 KB (about 120
   pages, rendered in ~1 s in release builds). CJK and other
   scripts DejaVu lacks are shown as `[U+XXXX]` rather than altered; exact names stay in
   CSV/TXT/MHL. Candidate for M6: an optional system fallback font.
-- Stall watchdog limits: the watchdog runs while files are copied. A destination that hangs
-  during resume's re-verification pass or while its folders are prepared at job start still
-  blocks the job (cancel works once the kernel returns). To fix with the M4 progress view.
+- Stall watchdog coverage: the watchdog runs from job start until cleanup — destination
+  setup (folder creation, staging), resume's re-verification pass, the copy, and manifest/
+  report writing. Per-destination setup and re-check run on detached threads, so one hung
+  drive is dropped (`DestinationStalled`) while the others continue. Tested with injected
+  hangs in setup and re-check (CLI, all platforms) and a frozen device-mapper target during
+  resume re-check (`linux-devices`).
+- Mac-formatted drives (addendum): HFS+ (plain, journaled, HFSX) and APFS are covered by
+  loop-mounted images in `linux-devices` (`mkfs.hfsplus`; `mkapfs` + `apfs-fuse`). FUSE mounts
+  are identified by their backing device (udev `ID_FS_TYPE` or on-disk signature), so
+  APFS-through-FUSE is recognised. Read-only APFS and journaled-HFS+ destinations are refused
+  at preflight with the reason and what to do instead. Name collision checks and manifest
+  name matching are normalization-aware (HFS+ returns NFD names). Support matrix in README.
 - Windows: canonical paths are reported without the `\\?\` prefix (it broke external tools
   and was unreadable in reports).
 

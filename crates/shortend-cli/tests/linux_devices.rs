@@ -1112,7 +1112,7 @@ fn hfs_plus_permission_edge_cases() {
 /// APFS: Linux can only read it (apfs-fuse). As a source it is recognised behind FUSE; as a
 /// destination ShortEnd refuses early, naming APFS and what to do instead.
 #[test]
-fn apfs_is_detected_and_refused_as_destination() {
+fn apfs_read_only_source_and_refused_destination() {
     privileged!();
     let _g = serial();
     let find = |var: &str, name: &str| {
@@ -1148,6 +1148,31 @@ fn apfs_is_detected_and_refused_as_destination() {
     .unwrap();
     let mnt = tmp.path().join("mnt");
     std::fs::create_dir(&mnt).unwrap();
+
+    // Populate the image like a Mac would, through the experimental linux-apfs-rw module
+    // (CI builds and loads it); then detach it and read it back the supported way.
+    let populated = run(
+        "mount",
+        &[
+            "-t",
+            "apfs",
+            "-o",
+            "loop,readwrite",
+            img.to_str().unwrap(),
+            mnt.to_str().unwrap(),
+        ],
+    )
+    .map(|_| {
+        card(&mnt.join("CARD"), 6, 300_000);
+        write(&mnt.join("CARD/Caf\u{e9} take 2.wav"), &noise(4_000, 7));
+        run("umount", &[mnt.to_str().unwrap()]).unwrap();
+    });
+    if let Err(e) = &populated {
+        skip_or_fail(
+            "APFS source",
+            format!("cannot write the test image (linux-apfs-rw module not loaded?): {e}"),
+        );
+    }
     run(
         apfs_fuse.to_str().unwrap(),
         &[
@@ -1170,6 +1195,24 @@ fn apfs_is_detected_and_refused_as_destination() {
     assert_eq!(probe.fs_type, FsType::Apfs, "APFS recognised behind FUSE");
     assert!(probe.read_only);
 
+    // Read-only APFS source through apfs-fuse.
+    let mut source_note = "source not tested (image could not be populated)";
+    if populated.is_ok() {
+        let apfs_card = mnt.join("root/CARD");
+        let out = tmp.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let mut s = spec(&apfs_card, &[&out]);
+        s.settings.reports.mhl = vec![shortend_core::report::mhl::MhlVersion::V2];
+        let (rep, _) = run_job(s, |_| {});
+        assert_eq!(rep.state, JobState::Completed, "{:?}", rep.warnings);
+        assert_eq!(rep.job.source.volume.fs_type, FsType::Apfs);
+        assert_eq!(rep.outcomes.len(), 9);
+        assert_copy(&apfs_card, &out.join("CARD"), Duration::ZERO);
+        let v = shortend_core::report::mhl::verify_folder(&out.join("CARD")).unwrap();
+        assert!(v[0].ok(), "{:?}", v[0].issues);
+        source_note = "9-file offload from read-only APFS source";
+    }
+
     let src = tmp.path().join("CARD");
     card(&src, 2, 1_000);
     let all = plan_err(spec(&src, &[&mnt.join("root")])).join("\n");
@@ -1177,5 +1220,7 @@ fn apfs_is_detected_and_refused_as_destination() {
         all.contains("APFS") && all.contains("read-only") && all.contains("exFAT"),
         "{all}"
     );
-    notice("apfs_is_detected_and_refused_as_destination: passed (apfs-fuse, read-only)");
+    notice(&format!(
+        "apfs_read_only_source_and_refused_destination: passed (apfs-fuse; {source_note}; destination refused)"
+    ));
 }

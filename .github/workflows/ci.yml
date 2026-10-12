@@ -65,7 +65,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y exfatprogs exfat-fuse dosfstools ntfs-3g dmsetup hfsprogs \
-            libfuse3-dev fuse3 cmake zlib1g-dev libbz2-dev libattr1-dev
+            libfuse3-dev fuse3 cmake zlib1g-dev libbz2-dev libattr1-dev "linux-headers-$(uname -r)"
           # HFS+ lives in the extra modules package on cloud kernels.
           sudo apt-get install -y "linux-modules-extra-$(uname -r)" || true
           sudo modprobe -a loop dm_mod || true
@@ -77,6 +77,9 @@ jobs:
           make -C apfsprogs/mkapfs -j4 > /dev/null
           git clone -q --recursive https://github.com/sgan81/apfs-fuse.git && git -C apfs-fuse checkout -q 66b86bd525e8cb90f9012543be89b1f092b75cf3
           cmake -S apfs-fuse -B apfs-fuse/build > /dev/null && make -C apfs-fuse/build -j4 apfs-fuse > /dev/null
+          # Experimental APFS write support, only to populate the test image.
+          git clone -q https://github.com/linux-apfs/linux-apfs-rw.git && git -C linux-apfs-rw checkout -q 923526a669d7c7d0d209c904436db3a3b8d14e97
+          make -C linux-apfs-rw -j4 > /dev/null && sudo insmod linux-apfs-rw/apfs.ko || echo "::warning::linux-apfs-rw did not build or load"
           echo "SHORTEND_MKAPFS=$RUNNER_TEMP/apfs/apfsprogs/mkapfs/mkapfs" >> "$GITHUB_ENV"
           echo "SHORTEND_APFS_FUSE=$RUNNER_TEMP/apfs/apfs-fuse/build/apfs-fuse" >> "$GITHUB_ENV"
       - name: Build tests
