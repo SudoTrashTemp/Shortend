@@ -54,9 +54,14 @@ macro_rules! privileged {
 }
 
 /// Surfaces a line as a GitHub Actions annotation (visible via the checks API) and on stderr.
+/// Records a result line. With `SHORTEND_RESULTS_FILE` set (CI), lines are appended there and
+/// a workflow step posts them as one annotation (GitHub keeps only 10 per step).
 fn notice(msg: &str) {
-    if std::env::var_os("GITHUB_ACTIONS").is_some() {
-        println!("\n::notice title=linux-devices::{msg}");
+    if let Some(path) = std::env::var_os("SHORTEND_RESULTS_FILE") {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{msg}");
+        }
     }
     eprintln!("{msg}");
 }
@@ -604,6 +609,61 @@ fn hung_destination_is_dropped_by_the_stall_watchdog() {
     assert_copy(&src, &vol.dir.join("A007"), Duration::ZERO);
     notice(&format!(
         "hung_destination_is_dropped_by_the_stall_watchdog: passed (job finished in {:.1} s)",
+        took.as_secs_f64()
+    ));
+}
+
+/// The common real-world sequence: a drive hangs, and the DIT resumes the job. The resume's
+/// re-verification of what was already copied must not hang the job.
+#[test]
+fn drive_hanging_during_resume_recheck_is_dropped() {
+    privileged!();
+    let _g = serial();
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(vol) = Volume::create(tmp.path(), "recheck", 256, Fs::Ext4, true) else {
+        return;
+    };
+    let other = tmp.path().join("raid");
+    std::fs::create_dir(&other).unwrap();
+    let src = tmp.path().join("A008");
+    card(&src, 12, 1_500_000);
+    let mut s = spec(&src, &[&vol.dir, &other]);
+    s.settings.stall_timeout_secs = 3;
+    let (rep, _) = run_job(s, |_| {});
+    assert_eq!(rep.state, JobState::Completed);
+    run("sync", &[]).unwrap();
+    let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
+
+    vol.freeze();
+    let t0 = Instant::now();
+    state_dir();
+    let (tx, rx) = mpsc::sync_channel(64);
+    let drain = std::thread::spawn(move || rx.into_iter().collect::<Vec<_>>());
+    let r =
+        shortend_core::resume(&rep.job.id.to_string(), &tx, &CancelToken::new()).expect("resume");
+    drop(tx);
+    let events = drain.join().unwrap();
+    let took = t0.elapsed();
+    vol.unfreeze();
+
+    assert_eq!(
+        dest_failure(&events, 0),
+        Some(Failure::DestinationStalled { seconds: 3 })
+    );
+    assert_eq!(r.state, JobState::CompletedWithFailures);
+    assert!(took < Duration::from_secs(60), "resume took {took:?}");
+    assert!(
+        r.outcomes
+            .iter()
+            .all(|o| o.dests[1].status == FileStatus::AlreadyVerified)
+    );
+
+    std::thread::sleep(Duration::from_secs(1));
+    let r = resume(&rep.job.id.to_string());
+    assert_eq!(r.state, JobState::Completed);
+    assert_copy(&src, &vol.dir.join("A008"), Duration::ZERO);
+    notice(&format!(
+        "drive_hanging_during_resume_recheck_is_dropped: passed (resume finished in {:.1} s)",
         took.as_secs_f64()
     ));
 }

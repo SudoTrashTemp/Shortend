@@ -74,7 +74,13 @@ jobs:
           sudo env "PATH=$PATH" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
             "RUSTFLAGS=$RUSTFLAGS" CARGO_TERM_COLOR=always GITHUB_ACTIONS=true \
             SHORTEND_PRIVILEGED_TESTS=1 SHORTEND_REQUIRE_ALL_FS=1 \
+            SHORTEND_RESULTS_FILE="$PWD/device-results.txt" \
             cargo test -p shortend-cli --test linux_devices -- --test-threads=1 --nocapture
+      - name: Report device test results
+        if: always()
+        run: |
+          [ -f device-results.txt ] || exit 0
+          echo "::notice title=linux-devices ($(wc -l < device-results.txt) results)::$(sed ':a;N;$!ba;s/\n/%0A/g' device-results.txt)"
       - name: Restore target ownership for the cache
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" target

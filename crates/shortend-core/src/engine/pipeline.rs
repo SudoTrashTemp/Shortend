@@ -238,9 +238,18 @@ pub(crate) fn execute(
         fault: fault::Fault::from_env(),
     });
 
-    for d in &job.destinations {
-        if let Err(f) = prepare_destination(&ctx, d) {
-            ctx.kill(d.id, f);
+    // The watchdog runs from the start: setup and resume's re-verification touch the
+    // destinations too, and a hung drive there must not hang the whole job.
+    let done = Arc::new(AtomicBool::new(false));
+    let ticker = {
+        let (ctx, done) = (Arc::clone(&ctx), Arc::clone(&done));
+        std::thread::spawn(move || progress_ticker(&ctx, &done))
+    };
+
+    let ids: Vec<DestId> = job.destinations.iter().map(|d| d.id).collect();
+    for (d, r) in guarded(&ctx, &ids, |ctx, d| prepare_destination(ctx, ctx.dest(d))) {
+        if let Some(Err(f)) = r {
+            ctx.kill(d, f);
         }
     }
 
@@ -267,12 +276,47 @@ pub(crate) fn execute(
 
     let mut already = 0;
     if let Some(replay) = replay {
-        for (o, entry) in outcomes.iter().zip(&job.files) {
+        let hashes = &job.settings.hashes;
+        for o in &outcomes {
             let mut o = o.lock().unwrap_or_else(|p| p.into_inner());
-            if reconcile(&ctx, entry, &mut o, replay) {
-                already += 1;
+            o.source = replay
+                .src
+                .get(&o.entry.rel)
+                .filter(|d| d.same_algorithms(hashes))
+                .cloned();
+        }
+        let sources: Arc<Vec<Option<Digests>>> = Arc::new(
+            outcomes
+                .iter()
+                .map(|o| o.lock().unwrap_or_else(|p| p.into_inner()).source.clone())
+                .collect(),
+        );
+        let replay = Arc::new(replay.clone());
+        let live: Vec<DestId> = ids
+            .iter()
+            .copied()
+            .filter(|d| ctx.dead(*d).is_none())
+            .collect();
+        let results = guarded(&ctx, &live, move |ctx, d| {
+            reconcile_dest(ctx, d, &sources, &replay)
+        });
+        for (d, r) in results {
+            for (idx, digests) in r.unwrap_or_default() {
+                let mut o = outcomes[idx].lock().unwrap_or_else(|p| p.into_inner());
+                let slot = &mut o.dests[d.index()];
+                slot.status = FileStatus::AlreadyVerified;
+                slot.verified = Some(digests);
             }
         }
+        already = outcomes
+            .iter()
+            .filter(|o| {
+                let o = o.lock().unwrap_or_else(|p| p.into_inner());
+                o.dests
+                    .iter()
+                    .all(|d| d.status == FileStatus::AlreadyVerified)
+            })
+            .count();
     }
 
     let work: Vec<usize> = outcomes
@@ -295,10 +339,8 @@ pub(crate) fn execute(
     });
 
     let next = AtomicUsize::new(0);
-    let done = AtomicBool::new(false);
     let workers = usize::from(job.settings.parallel_files.get()).min(work.len().max(1));
     std::thread::scope(|s| {
-        s.spawn(|| progress_ticker(&ctx, &done));
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 s.spawn(|| {
@@ -329,7 +371,6 @@ pub(crate) fn execute(
         for h in handles {
             let _ = h.join();
         }
-        done.store(true, Ordering::SeqCst);
     });
 
     let mut outcomes: Vec<FileOutcome> = outcomes
@@ -349,6 +390,8 @@ pub(crate) fn execute(
     }
 
     finish_destinations(&ctx);
+    done.store(true, Ordering::SeqCst);
+    let _ = ticker.join();
     let _ = journal.sync();
 
     let state = if cancel.is_cancelled() {
@@ -408,6 +451,10 @@ fn progress_ticker(ctx: &Ctx, done: &AtomicBool) {
 
 /// Revalidates a destination and creates its (empty) staging folder and the target tree.
 fn prepare_destination(ctx: &Ctx, d: &Destination) -> Result<(), Failure> {
+    #[cfg(feature = "fault-injection")]
+    if ctx.fault.hang_setup_dest == Some(d.id.0) {
+        fault::hang();
+    }
     if !same_volume_dir(&d.root, d.volume.dev) {
         return Err(Failure::DestinationOffline);
     }
@@ -431,6 +478,7 @@ fn prepare_destination(ctx: &Ctx, d: &Destination) -> Result<(), Failure> {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 std::fs::create_dir_all(&dir).map_err(|e| classify_dest(&e, d))?;
+                ctx.tick(d.id);
             }
             Err(e) => return Err(classify_dest(&e, d)),
         }
@@ -459,59 +507,109 @@ fn finish_destinations(ctx: &Ctx) {
     }
 }
 
-/// Resume: decides which (file, destination) pairs are already done. Returns true when the
-/// file needs no work at all. Implements the skip rule in PLAN.md §4.6.
-fn reconcile(ctx: &Ctx, entry: &FileEntry, o: &mut FileOutcome, replay: &Replay) -> bool {
+/// Runs `f` for each destination on its own detached thread under the stall watchdog and
+/// returns its result, or `None` for a destination the watchdog gave up on (its thread is
+/// abandoned, blocked in the kernel).
+fn guarded<T: Send + 'static>(
+    ctx: &Arc<Ctx>,
+    dests: &[DestId],
+    f: impl Fn(&Arc<Ctx>, DestId) -> T + Send + Sync + 'static,
+) -> Vec<(DestId, Option<T>)> {
+    let f = Arc::new(f);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut pending = Vec::new();
+    let mut out: Vec<(DestId, Option<T>)> = Vec::new();
+    for &d in dests {
+        let (ctx2, f, tx) = (Arc::clone(ctx), Arc::clone(&f), tx.clone());
+        let spawned = std::thread::Builder::new()
+            .name(format!("shortend-dest-{}", d.0))
+            .spawn(move || {
+                let guard = ctx2.busy(d);
+                let r = f(&ctx2, d);
+                drop(guard);
+                let _ = tx.send((d, r));
+            });
+        match spawned {
+            Ok(_) => pending.push(d),
+            Err(_) => out.push((d, None)),
+        }
+    }
+    drop(tx);
+    while !pending.is_empty() {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok((d, r)) => {
+                pending.retain(|x| *x != d);
+                out.push((d, Some(r)));
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                for d in pending.clone() {
+                    if ctx.stalled(d) {
+                        pending.retain(|x| *x != d);
+                        out.push((d, None));
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                out.extend(pending.drain(..).map(|d| (d, None)));
+            }
+        }
+    }
+    out
+}
+
+/// Resume, for one destination: which files are already there and verified. Every file at
+/// its final path is re-read from the device and compared with the journaled source checksums
+/// (a journal record alone is never trusted); anything unproven is removed so it is copied
+/// again. Implements the skip rule in PLAN.md §4.6.
+fn reconcile_dest(
+    ctx: &Arc<Ctx>,
+    d: DestId,
+    sources: &[Option<Digests>],
+    replay: &Replay,
+) -> Vec<(usize, Digests)> {
     let hashes = &ctx.job.settings.hashes;
-    let src = replay
-        .src
-        .get(&entry.rel)
-        .filter(|d| d.same_algorithms(hashes))
-        .cloned();
-    o.source = src.clone();
-    for d in &mut o.dests {
-        let dest = ctx.dest(d.dest);
-        if ctx.dead(d.dest).is_some() {
-            continue;
+    let dest = ctx.dest(d);
+    let mut done = Vec::new();
+    for (idx, (entry, src)) in ctx.job.files.iter().zip(sources).enumerate() {
+        if ctx.dead(d).is_some() || ctx.cancel.is_cancelled() {
+            break;
+        }
+        #[cfg(feature = "fault-injection")]
+        if idx == 0 && ctx.fault.hang_reverify_dest == Some(d.0) {
+            fault::hang();
         }
         let final_path = entry.rel.to_path(&dest.target);
-        let committed = replay.commits.get(&(entry.rel.clone(), d.dest));
         match std::fs::symlink_metadata(&final_path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Ok(m) if m.is_file() && src.is_some() => {
-                // A journal record is never trusted on its own: the file could have been
-                // damaged after it was verified. Re-read it from the device and compare with
-                // the journaled source checksums; anything that doesn't match is re-copied.
                 let s = src.as_ref().expect("checked");
                 match hash_path(&final_path, hashes, &ctx.cancel, |n| {
-                    ctx.verified_bytes[d.dest.index()].fetch_add(n, Ordering::Relaxed);
+                    ctx.verified_bytes[d.index()].fetch_add(n, Ordering::Relaxed);
+                    ctx.tick(d);
                 }) {
                     // The card's ASC MHL chain file, which this job's manifest extended.
-                    Ok(_) if replay.mhl.contains(&d.dest) && is_chain_file(entry) => {
-                        d.status = FileStatus::AlreadyVerified;
-                        d.verified = Some(s.clone());
+                    Ok(_) if replay.mhl.contains(&d) && is_chain_file(entry) => {
+                        done.push((idx, s.clone()));
                     }
                     Ok(v) if &v == s && final_matches(&final_path, entry, dest) => {
-                        if committed != Some(&v) {
+                        if replay.commits.get(&(entry.rel.clone(), d)) != Some(&v) {
                             ctx.record(&Record::Commit {
                                 rel: entry.rel.clone(),
-                                dest: d.dest,
+                                dest: d,
                                 digests: v.clone(),
                             });
                         }
-                        d.status = FileStatus::AlreadyVerified;
-                        d.verified = Some(v);
+                        done.push((idx, v));
                     }
                     _ => remove_unproven(ctx, &final_path, dest),
                 }
             }
             Ok(_) => remove_unproven(ctx, &final_path, dest),
-            Err(e) => ctx.kill(d.dest, classify_dest(&e, dest)),
+            Err(e) => ctx.kill(d, classify_dest(&e, dest)),
         }
+        ctx.tick(d);
     }
-    o.dests
-        .iter()
-        .all(|d| d.status == FileStatus::AlreadyVerified)
+    done
 }
 
 fn is_chain_file(entry: &FileEntry) -> bool {
@@ -1125,12 +1223,16 @@ fn classify_source(e: &io::Error, ctx: &Ctx) -> Failure {
 /// - `corrupt-dest=N`: flip the first byte written to destination N for every file, so
 ///   read-back verification must catch it;
 /// - `hang-dest=N`: the writer for destination N blocks forever on its first chunk, like a
-///   drive that stopped answering, so the stall watchdog must catch it.
+///   drive that stopped answering, so the stall watchdog must catch it;
+/// - `hang-setup-dest=N` / `hang-reverify-dest=N`: the same while destination N is being
+///   prepared at job start, or re-verified on resume.
 #[cfg(feature = "fault-injection")]
 mod fault {
     pub struct Fault {
         pub corrupt_dest: Option<u16>,
         pub hang_dest: Option<u16>,
+        pub hang_setup_dest: Option<u16>,
+        pub hang_reverify_dest: Option<u16>,
     }
 
     impl Fault {
@@ -1143,6 +1245,8 @@ mod fault {
             Self {
                 corrupt_dest: get("corrupt-dest="),
                 hang_dest: get("hang-dest="),
+                hang_setup_dest: get("hang-setup-dest="),
+                hang_reverify_dest: get("hang-reverify-dest="),
             }
         }
     }

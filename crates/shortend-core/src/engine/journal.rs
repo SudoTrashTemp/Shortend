@@ -86,7 +86,7 @@ impl Journal {
 }
 
 /// What a previous run established.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Replay {
     pub src: HashMap<RelPath, Digests>,
     /// Destinations that already received a manifest from this job.

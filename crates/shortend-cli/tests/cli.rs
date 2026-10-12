@@ -308,6 +308,72 @@ fn stalled_destination_is_dropped_and_job_finishes() {
     assert_eq!(tree(&env.path("hung/CARD")), tree(&env.path("CARD")));
 }
 
+/// The watchdog also covers destination setup at job start and resume's re-verification
+/// pass (a drive that hangs while ShortEnd re-reads what it already copied).
+#[test]
+fn stall_during_setup_and_resume_recheck_is_caught() {
+    let env = Env::new();
+    for i in 0..4 {
+        write(
+            &env.path(&format!("CARD/c{i}.mov")),
+            &noise(200_000 + i, i as u64),
+        );
+    }
+    env.mkdirs(&["good", "hung"]);
+    let copy = |fault: &str| {
+        env.cmd()
+            .env("SHORTEND_FAULT", fault)
+            .args(["copy", "--stall-timeout", "2", "--no-pdf", "-s"])
+            .arg(env.path("CARD"))
+            .arg("-d")
+            .arg(env.path("good"))
+            .arg("-d")
+            .arg(env.path("hung"))
+            .output()
+            .unwrap()
+    };
+
+    // Hang while preparing destination 2.
+    let t0 = Instant::now();
+    let o = copy("hang-setup-dest=1");
+    assert_eq!(o.status.code(), Some(1), "{}", ok(&o));
+    assert!(t0.elapsed() < Duration::from_secs(30));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("destination stalled"));
+    assert_eq!(tree(&env.path("good/CARD")), tree(&env.path("CARD")));
+
+    // A clean job, then a resume whose re-verification of destination 2 hangs.
+    std::fs::remove_dir_all(env.path("good")).unwrap();
+    std::fs::remove_dir_all(env.path("hung")).unwrap();
+    env.mkdirs(&["good", "hung"]);
+    let o = copy("");
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    let id = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("Job "))
+        .unwrap()
+        .to_owned();
+    let t0 = Instant::now();
+    let o = env
+        .cmd()
+        .env("SHORTEND_FAULT", "hang-reverify-dest=1")
+        .args(["resume", &id])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1), "{}", ok(&o));
+    assert!(t0.elapsed() < Duration::from_secs(30));
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("destination stalled"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        stdout.contains("4/4 verified"),
+        "the healthy destination is re-verified: {stdout}"
+    );
+
+    // Without the fault, resume succeeds again.
+    let o = env.cmd().args(["resume", &id]).output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+}
+
 /// Kills `shortend copy` with SIGKILL at seeded random moments, then resumes. After every
 /// resume both destinations must match the source exactly, with nothing left in staging.
 #[test]
