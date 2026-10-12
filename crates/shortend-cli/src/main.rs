@@ -75,6 +75,9 @@ struct CopyArgs {
     /// Don't write the TXT report.
     #[arg(long)]
     no_txt: bool,
+    /// Give up on a destination after this many seconds without progress (0 = never).
+    #[arg(long, default_value = "60", value_name = "SECS")]
+    stall_timeout: u32,
     /// Read/write chunk size in MiB (tuning).
     #[arg(long, default_value = "8", hide = true, value_parser = clap::value_parser!(u32).range(1..=256))]
     chunk_mib: u32,
@@ -132,6 +135,7 @@ fn copy(a: CopyArgs) -> shortend_core::Result<ExitCode> {
             source_reread: a.reread_source,
             parallel_files: a.parallel,
             chunk_size: a.chunk_mib << 20,
+            stall_timeout_secs: a.stall_timeout,
             reports: ReportOptions {
                 csv: !a.no_csv,
                 txt: !a.no_txt,

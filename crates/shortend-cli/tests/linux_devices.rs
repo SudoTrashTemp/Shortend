@@ -218,6 +218,17 @@ impl Volume {
         }
     }
 
+    /// Simulated hang: I/O to the device is queued and never completes until `unfreeze`.
+    fn freeze(&self) {
+        let (name, _) = self.dm.as_ref().expect("dm volume");
+        run("dmsetup", &["suspend", "--noflush", "--nolockfs", name]).unwrap();
+    }
+
+    fn unfreeze(&self) {
+        let (name, _) = self.dm.as_ref().expect("dm volume");
+        run("dmsetup", &["resume", name]).unwrap();
+    }
+
     /// Simulated cable pull: every further I/O to the device fails with EIO.
     fn break_device(&self) {
         let (name, sectors) = self.dm.as_ref().expect("dm volume");
@@ -277,6 +288,7 @@ impl Drop for Volume {
             .args(["-l", self.dir.to_str().unwrap()])
             .output();
         if let Some((n, _)) = &self.dm {
+            let _ = Command::new("dmsetup").args(["resume", n]).output();
             let _ = Command::new("dmsetup").args(["remove", "-f", n]).output();
         }
         let _ = Command::new("losetup")
@@ -546,6 +558,54 @@ fn hot_unplug_of_the_source_stops_the_job_and_resumes_after_reconnect() {
     assert_eq!(rep.state, JobState::Completed);
     assert_copy(&src, &dst.join("A003"), Duration::ZERO);
     notice("hot_unplug_of_the_source_stops_the_job_and_resumes_after_reconnect: passed");
+}
+
+#[test]
+fn hung_destination_is_dropped_by_the_stall_watchdog() {
+    privileged!();
+    let _g = serial();
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(vol) = Volume::create(tmp.path(), "hung", 256, Fs::Ext4, true) else {
+        return;
+    };
+    let other = tmp.path().join("raid");
+    std::fs::create_dir(&other).unwrap();
+    let src = tmp.path().join("A007");
+    card(&src, 20, 1_500_000);
+
+    let mut s = spec(&src, &[&vol.dir, &other]);
+    s.settings.stall_timeout_secs = 3;
+    let t0 = Instant::now();
+    let (rep, events) = run_job(s, |n| {
+        if n == 3 {
+            vol.freeze();
+        }
+    });
+    let took = t0.elapsed();
+    assert_eq!(
+        dest_failure(&events, 0),
+        Some(Failure::DestinationStalled { seconds: 3 }),
+        "frozen destination reported as stalled"
+    );
+    assert_eq!(rep.state, JobState::CompletedWithFailures);
+    assert!(took < Duration::from_secs(120), "job took {took:?}");
+    assert!(
+        rep.outcomes
+            .iter()
+            .all(|o| o.dests[1].status == FileStatus::Verified),
+        "other destination unaffected"
+    );
+    assert_copy(&src, &other.join("A007"), Duration::ZERO);
+
+    vol.unfreeze();
+    std::thread::sleep(Duration::from_secs(1)); // let the abandoned writer finish or fail
+    let rep = resume(&rep.job.id.to_string());
+    assert_eq!(rep.state, JobState::Completed);
+    assert_copy(&src, &vol.dir.join("A007"), Duration::ZERO);
+    notice(&format!(
+        "hung_destination_is_dropped_by_the_stall_watchdog: passed (job finished in {:.1} s)",
+        took.as_secs_f64()
+    ));
 }
 
 #[test]

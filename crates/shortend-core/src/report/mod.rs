@@ -12,7 +12,7 @@ use jiff::tz::TimeZone;
 
 use crate::engine::preflight::REPORT_DIR;
 use crate::fs::same_volume_dir;
-use crate::model::{FileStatus, JobReport};
+use crate::model::{Failure, FileStatus, JobReport};
 
 /// Writes every enabled report. Returns the files written and warnings for places that failed;
 /// a report that can't be written never fails the job.
@@ -39,6 +39,10 @@ pub fn write_all(rep: &JobReport, state_dir: &Path) -> (Vec<PathBuf>, Vec<String
         .job
         .destinations
         .iter()
+        .zip(&rep.dest_stats)
+        // Never touch a stalled destination again: any call could block forever.
+        .filter(|(_, st)| !matches!(st.failure, Some(Failure::DestinationStalled { .. })))
+        .map(|(d, _)| d)
         .filter(|d| same_volume_dir(&d.root, d.volume.dev) && d.target.is_dir())
         .map(|d| d.target.join(REPORT_DIR))
         .collect();

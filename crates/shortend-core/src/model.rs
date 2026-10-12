@@ -109,7 +109,15 @@ pub struct JobSettings {
     pub chunk_size: u32,
     /// Extra attempts for a file whose verification failed.
     pub retries: u8,
+    /// A destination with work in progress but no bytes written or verified for this many
+    /// seconds is marked stalled and dropped from the job. 0 disables the watchdog.
+    #[serde(default = "default_stall_timeout")]
+    pub stall_timeout_secs: u32,
     pub reports: ReportOptions,
+}
+
+fn default_stall_timeout() -> u32 {
+    60
 }
 
 impl Default for JobSettings {
@@ -120,6 +128,7 @@ impl Default for JobSettings {
             parallel_files: NonZeroU8::new(2).expect("nonzero"),
             chunk_size: 8 << 20,
             retries: 1,
+            stall_timeout_secs: default_stall_timeout(),
             reports: ReportOptions::default(),
         }
     }
@@ -211,6 +220,10 @@ pub enum Failure {
     SourceUnavailable,
     /// The destination volume disappeared, was replaced, or failed with an I/O error.
     DestinationOffline,
+    /// The destination made no progress for the stall timeout (a hung drive or mount).
+    DestinationStalled {
+        seconds: u32,
+    },
     DiskFull,
     PermissionDenied,
     Io {
@@ -224,7 +237,10 @@ impl Failure {
     pub fn is_fatal_for_destination(&self) -> bool {
         matches!(
             self,
-            Self::DestinationOffline | Self::DiskFull | Self::PermissionDenied
+            Self::DestinationOffline
+                | Self::DestinationStalled { .. }
+                | Self::DiskFull
+                | Self::PermissionDenied
         )
     }
 }
@@ -243,6 +259,9 @@ impl fmt::Display for Failure {
                 write!(f, "source re-read differs: first {first}, second {second}")
             }
             Self::SourceUnavailable => f.write_str("source unavailable (removed or failing)"),
+            Self::DestinationStalled { seconds } => {
+                write!(f, "destination stalled (no progress for {seconds} s)")
+            }
             Self::DestinationOffline => {
                 f.write_str("destination offline (removed, replaced or failing)")
             }
@@ -320,6 +339,8 @@ impl fmt::Display for JobState {
 pub struct DestStats {
     pub bytes_written: u64,
     pub bytes_verified: u64,
+    /// Why the destination was dropped from the job, if it was.
+    pub failure: Option<Failure>,
 }
 
 #[derive(Debug, Clone)]

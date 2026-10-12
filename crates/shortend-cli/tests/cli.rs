@@ -217,6 +217,61 @@ fn corruption_on_one_destination_is_detected_and_exits_1() {
     );
 }
 
+/// A destination whose writer hangs (a drive that stops answering) is given up on after the
+/// stall timeout; the other destination completes, the job reports it and exits 1, and a
+/// later resume completes the stalled destination.
+#[test]
+fn stalled_destination_is_dropped_and_job_finishes() {
+    let env = Env::new();
+    for i in 0..6 {
+        write(
+            &env.path(&format!("CARD/c{i}.mov")),
+            &noise(300_000 + i, i as u64),
+        );
+    }
+    env.mkdirs(&["good", "hung"]);
+    let t0 = Instant::now();
+    let o = env
+        .cmd()
+        .env("SHORTEND_FAULT", "hang-dest=1")
+        .args(["copy", "--stall-timeout", "2", "-s"])
+        .arg(env.path("CARD"))
+        .arg("-d")
+        .arg(format!("GOOD={}", env.path("good").display()))
+        .arg("-d")
+        .arg(format!("HUNG={}", env.path("hung").display()))
+        .output()
+        .unwrap();
+    let took = t0.elapsed();
+    assert_eq!(o.status.code(), Some(1), "{}", ok(&o));
+    assert!(took < Duration::from_secs(30), "job took {took:?}");
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("destination stalled"), "{stderr}");
+    assert_eq!(tree(&env.path("good/CARD")), tree(&env.path("CARD")));
+    assert!(tree(&env.path("hung/CARD")).is_empty());
+    let txt = std::fs::read_dir(env.path("good/CARD/_ShortEnd"))
+        .unwrap()
+        .flatten()
+        .find(|e| e.path().extension().unwrap() == "txt")
+        .unwrap();
+    let txt = std::fs::read_to_string(txt.path()).unwrap();
+    assert!(
+        txt.contains("DESTINATION FAILED: destination stalled"),
+        "{txt}"
+    );
+    // No report was written to the stalled destination.
+    assert!(!env.path("hung/CARD/_ShortEnd").exists());
+
+    let id = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("Job "))
+        .unwrap()
+        .to_owned();
+    let o = env.cmd().args(["resume", &id]).output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", ok(&o));
+    assert_eq!(tree(&env.path("hung/CARD")), tree(&env.path("CARD")));
+}
+
 /// Kills `shortend copy` with SIGKILL at seeded random moments, then resumes. After every
 /// resume both destinations must match the source exactly, with nothing left in staging.
 #[test]

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use jiff::Timestamp;
 
@@ -37,26 +37,60 @@ pub(crate) struct Outcome {
     pub warnings: Vec<String>,
 }
 
-struct Ctx<'a> {
-    job: &'a Job,
-    events: &'a SyncSender<Event>,
-    cancel: &'a CancelToken,
-    journal: &'a Journal,
+/// Per-destination activity, read by the stall watchdog.
+struct Activity {
+    /// Writers currently working on this destination.
+    busy: AtomicUsize,
+    /// Milliseconds since `Ctx::started` of the last byte written or verified.
+    last_progress_ms: AtomicU64,
+}
+
+/// Shared state of one run. Owned (behind an `Arc`) so writer threads can outlive a call:
+/// a writer blocked inside the kernel on a hung drive cannot be joined or killed, so it is
+/// left behind once the watchdog has given up on its destination.
+struct Ctx {
+    job: Arc<Job>,
+    /// Taken (set to `None`) when the run ends, so an abandoned writer thread that still holds
+    /// the context does not keep the caller's event channel open.
+    events: Mutex<Option<SyncSender<Event>>>,
+    cancel: CancelToken,
+    journal: Arc<Journal>,
     staging: Vec<PathBuf>,
     dead: Vec<Mutex<Option<Failure>>>,
     abort: AtomicBool,
     src_bytes: AtomicU64,
     dest_bytes: Vec<AtomicU64>,
     verified_bytes: Vec<AtomicU64>,
+    activity: Vec<Activity>,
+    started: Instant,
     warnings: Mutex<Vec<String>>,
     journal_failed: AtomicBool,
     #[cfg(feature = "fault-injection")]
     fault: fault::Fault,
 }
 
-impl Ctx<'_> {
+impl Ctx {
     fn emit(&self, ev: Event) {
-        let _ = self.events.send(ev);
+        let tx = self
+            .events
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(tx) = tx {
+            let _ = tx.send(ev);
+        }
+    }
+
+    fn try_emit(&self, ev: Event) -> bool {
+        let tx = self
+            .events
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        match tx.map(|tx| tx.try_send(ev)) {
+            Some(Ok(()) | Err(TrySendError::Full(_))) => true,
+            Some(Err(TrySendError::Disconnected(_))) | None => false,
+        }
     }
 
     fn warn(&self, msg: String) {
@@ -84,6 +118,10 @@ impl Ctx<'_> {
             .clone()
     }
 
+    fn stalled(&self, d: DestId) -> bool {
+        matches!(self.dead(d), Some(Failure::DestinationStalled { .. }))
+    }
+
     /// Marks a destination unusable for the rest of the job (first failure wins).
     fn kill(&self, d: DestId, failure: Failure) {
         let mut slot = self.dead[d.index()]
@@ -107,22 +145,76 @@ impl Ctx<'_> {
     fn stopping(&self) -> bool {
         self.cancel.is_cancelled() || self.abort.load(Ordering::SeqCst)
     }
+
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Records progress on a destination for the watchdog.
+    fn tick(&self, d: DestId) {
+        self.activity[d.index()]
+            .last_progress_ms
+            .store(self.now_ms(), Ordering::Relaxed);
+    }
+
+    /// Marks a writer as working on `d` until the guard is dropped.
+    fn busy(self: &Arc<Self>, d: DestId) -> BusyGuard {
+        self.tick(d);
+        self.activity[d.index()].busy.fetch_add(1, Ordering::SeqCst);
+        BusyGuard {
+            ctx: Arc::clone(self),
+            d,
+        }
+    }
+
+    /// Stall watchdog: a destination with a writer in progress but no bytes written or
+    /// verified for `stall_timeout_secs` is given up on.
+    fn check_stalls(&self) {
+        let secs = self.job.settings.stall_timeout_secs;
+        if secs == 0 {
+            return;
+        }
+        let limit = u64::from(secs) * 1000;
+        let now = self.now_ms();
+        for (i, a) in self.activity.iter().enumerate() {
+            let d = DestId(i as u16);
+            if a.busy.load(Ordering::SeqCst) > 0
+                && now.saturating_sub(a.last_progress_ms.load(Ordering::Relaxed)) >= limit
+                && self.dead(d).is_none()
+            {
+                self.kill(d, Failure::DestinationStalled { seconds: secs });
+            }
+        }
+    }
+}
+
+struct BusyGuard {
+    ctx: Arc<Ctx>,
+    d: DestId,
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.ctx.activity[self.d.index()]
+            .busy
+            .fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Runs (or continues) a job. `replay` is `Some` when resuming.
 pub(crate) fn execute(
     job: &Job,
-    journal: &Journal,
+    journal: &Arc<Journal>,
     replay: Option<&Replay>,
     events: &SyncSender<Event>,
     cancel: &CancelToken,
 ) -> Outcome {
     let n_dest = job.destinations.len();
-    let ctx = Ctx {
-        job,
-        events,
-        cancel,
-        journal,
+    let ctx = Arc::new(Ctx {
+        job: Arc::new(job.clone()),
+        events: Mutex::new(Some(events.clone())),
+        cancel: cancel.clone(),
+        journal: Arc::clone(journal),
         staging: job
             .destinations
             .iter()
@@ -133,11 +225,18 @@ pub(crate) fn execute(
         src_bytes: AtomicU64::new(0),
         dest_bytes: (0..n_dest).map(|_| AtomicU64::new(0)).collect(),
         verified_bytes: (0..n_dest).map(|_| AtomicU64::new(0)).collect(),
+        activity: (0..n_dest)
+            .map(|_| Activity {
+                busy: AtomicUsize::new(0),
+                last_progress_ms: AtomicU64::new(0),
+            })
+            .collect(),
+        started: Instant::now(),
         warnings: Mutex::new(job.warnings.clone()),
         journal_failed: AtomicBool::new(false),
         #[cfg(feature = "fault-injection")]
         fault: fault::Fault::from_env(),
-    };
+    });
 
     for d in &job.destinations {
         if let Err(f) = prepare_destination(&ctx, d) {
@@ -266,13 +365,20 @@ pub(crate) fn execute(
         .map(|i| DestStats {
             bytes_written: ctx.dest_bytes[i].load(Ordering::SeqCst),
             bytes_verified: ctx.verified_bytes[i].load(Ordering::SeqCst),
+            failure: ctx.dead(DestId(i as u16)),
         })
         .collect();
+    let warnings = ctx
+        .warnings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    *ctx.events.lock().unwrap_or_else(|p| p.into_inner()) = None;
     Outcome {
         state,
         outcomes,
         dest_stats,
-        warnings: ctx.warnings.into_inner().unwrap_or_else(|p| p.into_inner()),
+        warnings,
     }
 }
 
@@ -289,10 +395,10 @@ fn progress_ticker(ctx: &Ctx, done: &AtomicBool) {
                 .collect(),
             total_bytes: total,
         };
-        match ctx.events.try_send(ev) {
-            Ok(()) | Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => return,
+        if !ctx.try_emit(ev) {
+            return;
         }
+        ctx.check_stalls();
         if finished {
             return;
         }
@@ -335,7 +441,10 @@ fn prepare_destination(ctx: &Ctx, d: &Destination) -> Result<(), Failure> {
 /// After the workers: flush directory entries and remove this job's staging folder.
 fn finish_destinations(ctx: &Ctx) {
     for d in &ctx.job.destinations {
-        if ctx.dead(d.id).is_some() && !same_volume_dir(&d.root, d.volume.dev) {
+        // A stalled destination is not touched again: any call could block forever.
+        if ctx.stalled(d.id)
+            || (ctx.dead(d.id).is_some() && !same_volume_dir(&d.root, d.volume.dev))
+        {
             continue;
         }
         for dir in std::iter::once(d.target.clone())
@@ -374,12 +483,9 @@ fn reconcile(ctx: &Ctx, entry: &FileEntry, o: &mut FileOutcome, replay: &Replay)
                 // damaged after it was verified. Re-read it from the device and compare with
                 // the journaled source checksums; anything that doesn't match is re-copied.
                 let s = src.as_ref().expect("checked");
-                match hash_path(
-                    &final_path,
-                    hashes,
-                    ctx.cancel,
-                    Some(&ctx.verified_bytes[d.dest.index()]),
-                ) {
+                match hash_path(&final_path, hashes, &ctx.cancel, |n| {
+                    ctx.verified_bytes[d.dest.index()].fetch_add(n, Ordering::Relaxed);
+                }) {
                     Ok(v) if &v == s && final_matches(&final_path, entry, dest) => {
                         if committed != Some(&v) {
                             ctx.record(&Record::Commit {
@@ -428,7 +534,7 @@ fn final_matches(path: &Path, entry: &FileEntry, dest: &Destination) -> bool {
 
 /// Copies one file to every destination that still needs it, retrying verification
 /// failures up to `settings.retries` times.
-fn process_file(ctx: &Ctx, idx: usize, o: &mut FileOutcome, pool: &Pool) {
+fn process_file(ctx: &Arc<Ctx>, idx: usize, o: &mut FileOutcome, pool: &Pool) {
     let retries = ctx.job.settings.retries;
     let mut attempt: u8 = 0;
     loop {
@@ -559,11 +665,23 @@ struct Pool {
 
 impl Pool {
     fn new(chunk: usize) -> Self {
+        let pool = Self {
+            tx: std::sync::mpsc::channel().0,
+            rx: std::sync::mpsc::channel().1,
+            chunk,
+        };
         let (tx, rx) = std::sync::mpsc::channel();
-        for _ in 0..POOL_DEPTH {
-            tx.send(Vec::new()).expect("receiver alive");
+        let pool = Self { tx, rx, ..pool };
+        pool.replenish(POOL_DEPTH);
+        pool
+    }
+
+    /// Adds `n` buffers. Used when a stalled writer is abandoned while holding some: those
+    /// stay with the hung thread, and the bound grows by at most `QUEUE_DEPTH + 1` per stall.
+    fn replenish(&self, n: usize) {
+        for _ in 0..n {
+            let _ = self.tx.send(Vec::new());
         }
-        Self { tx, rx, chunk }
     }
 
     fn get(&self, cancel: &CancelToken) -> Option<Vec<u8>> {
@@ -588,7 +706,7 @@ type DestResults = Vec<(DestId, Result<Digests, Failure>)>;
 /// One attempt at copying file `idx` to `dests`. Returns the source result (`None` if the
 /// source was never read because no destination could start) and one result per destination.
 fn copy_once(
-    ctx: &Ctx,
+    ctx: &Arc<Ctx>,
     idx: usize,
     dests: &[DestId],
     attempt: u8,
@@ -624,44 +742,107 @@ fn copy_once(
         return (None, results);
     }
 
-    let src_result = std::thread::scope(|s| {
-        let mut senders = Vec::new();
-        let mut handles = Vec::new();
-        for (d, part, file) in setups {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<Msg>(QUEUE_DEPTH);
-            let final_path = entry.rel.to_path(&ctx.dest(d).target);
-            senders.push(tx);
-            handles.push((
-                d,
-                s.spawn(move || writer(ctx, d, entry, part, file, final_path, rx)),
-            ));
-        }
-        let mut result: SourceResult =
-            read_and_fan_out(ctx, entry, src, &mut senders, pool).map(|digests| (digests, None));
-        if ctx.job.settings.source_reread
-            && let Ok((first, _)) = &result
-        {
-            result = reread_source(ctx, &src_path, first);
-        }
-        for tx in &senders {
-            let msg = match &result {
-                Ok((digests, _)) => Msg::End(digests.clone()),
-                Err(_) => Msg::Abort,
-            };
-            let _ = tx.send(msg);
-        }
-        drop(senders);
-        for (d, h) in handles {
-            let r = h.join().unwrap_or_else(|_| {
-                Err(Failure::Io {
-                    message: "writer thread panicked".into(),
-                })
+    // Writers are detached threads reporting through a channel: a writer stuck in the kernel
+    // on a hung drive is abandoned once the watchdog marks its destination stalled.
+    let (res_tx, res_rx) = std::sync::mpsc::channel::<(DestId, Result<Digests, Failure>)>();
+    let mut senders = Vec::new();
+    let mut outstanding = Vec::new();
+    for (d, part, file) in setups {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Msg>(QUEUE_DEPTH);
+        let final_path = entry.rel.to_path(&ctx.dest(d).target);
+        let (ctx2, res_tx) = (Arc::clone(ctx), res_tx.clone());
+        let spawned = std::thread::Builder::new()
+            .name(format!("shortend-writer-{}", d.0))
+            .spawn(move || {
+                let guard = ctx2.busy(d);
+                let r = writer(&ctx2, d, idx, part, file, final_path, rx);
+                drop(guard);
+                let _ = res_tx.send((d, r));
             });
-            results.push((d, r));
+        match spawned {
+            Ok(_) => {
+                senders.push((d, tx));
+                outstanding.push(d);
+            }
+            Err(e) => results.push((
+                d,
+                Err(Failure::Io {
+                    message: format!("cannot start writer thread: {e}"),
+                }),
+            )),
         }
-        result
-    });
-    (Some(src_result), results)
+    }
+    drop(res_tx);
+
+    let mut result: SourceResult =
+        read_and_fan_out(ctx, entry, src, &mut senders, pool).map(|digests| (digests, None));
+    if ctx.job.settings.source_reread
+        && let Ok((first, _)) = &result
+    {
+        result = reread_source(ctx, &src_path, first);
+    }
+    let last = match &result {
+        Ok((digests, _)) => Some(digests.clone()),
+        Err(_) => None,
+    };
+    for (d, tx) in &senders {
+        let msg = match &last {
+            Some(digests) => Msg::End(digests.clone()),
+            None => Msg::Abort,
+        };
+        send_unless_dead(ctx, *d, tx, msg);
+    }
+    drop(senders);
+
+    while !outstanding.is_empty() {
+        match res_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok((d, r)) => {
+                outstanding.retain(|x| *x != d);
+                results.push((d, r));
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                for d in outstanding.clone() {
+                    if let Some(f @ Failure::DestinationStalled { .. }) = ctx.dead(d) {
+                        outstanding.retain(|x| *x != d);
+                        results.push((d, Err(f)));
+                        pool.replenish(QUEUE_DEPTH + 1);
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                for d in outstanding.drain(..) {
+                    results.push((
+                        d,
+                        Err(Failure::Io {
+                            message: "writer thread ended without a result".into(),
+                        }),
+                    ));
+                }
+            }
+        }
+    }
+    (Some(result), results)
+}
+
+/// Sends to a writer without ever blocking on a destination the watchdog has given up on.
+/// Returns false if the writer is gone or its destination is dead.
+fn send_unless_dead(ctx: &Ctx, d: DestId, tx: &SyncSender<Msg>, msg: Msg) -> bool {
+    let mut msg = msg;
+    let mut backoff = Duration::from_micros(50);
+    loop {
+        match tx.try_send(msg) {
+            Ok(()) => return true,
+            Err(TrySendError::Disconnected(_)) => return false,
+            Err(TrySendError::Full(m)) => {
+                if ctx.stalled(d) {
+                    return false;
+                }
+                msg = m;
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(Duration::from_millis(2));
+            }
+        }
+    }
 }
 
 /// Reads the source once, hashing in-stream and handing each chunk to every live writer.
@@ -669,7 +850,7 @@ fn read_and_fan_out(
     ctx: &Ctx,
     entry: &FileEntry,
     mut src: File,
-    senders: &mut Vec<SyncSender<Msg>>,
+    senders: &mut Vec<(DestId, SyncSender<Msg>)>,
     pool: &Pool,
 ) -> Result<Digests, Failure> {
     let mut hasher = MultiHasher::new(&ctx.job.settings.hashes);
@@ -682,7 +863,7 @@ fn read_and_fan_out(
             // Every writer failed; their own errors describe what happened.
             return Err(Failure::Cancelled);
         }
-        let Some(buf) = pool.get(ctx.cancel) else {
+        let Some(buf) = pool.get(&ctx.cancel) else {
             return Err(Failure::Cancelled);
         };
         // Wrapped immediately so the buffer goes back to the pool on every path.
@@ -706,7 +887,7 @@ fn read_and_fan_out(
         total += chunk.len as u64;
         ctx.src_bytes.fetch_add(chunk.len as u64, Ordering::Relaxed);
         let chunk = Arc::new(chunk);
-        senders.retain(|tx| tx.send(Msg::Data(Arc::clone(&chunk))).is_ok());
+        senders.retain(|(d, tx)| send_unless_dead(ctx, *d, tx, Msg::Data(Arc::clone(&chunk))));
     }
     let meta = src.metadata().map_err(|e| classify_source(&e, ctx))?;
     let mtime = meta
@@ -721,7 +902,7 @@ fn read_and_fan_out(
 
 /// Optional second pass: reads the source again from the device and compares checksums.
 fn reread_source(ctx: &Ctx, path: &Path, first: &Digests) -> SourceResult {
-    match hash_path(path, &ctx.job.settings.hashes, ctx.cancel, None) {
+    match hash_path(path, &ctx.job.settings.hashes, &ctx.cancel, |_| {}) {
         Ok(second) if &second == first => Ok((first.clone(), Some(second))),
         Ok(second) => Err(Failure::SourceReread {
             first: first.clone(),
@@ -737,12 +918,13 @@ fn reread_source(ctx: &Ctx, path: &Path, first: &Digests) -> SourceResult {
 fn writer(
     ctx: &Ctx,
     d: DestId,
-    entry: &FileEntry,
+    idx: usize,
     part: PathBuf,
     mut file: File,
     final_path: PathBuf,
     rx: Receiver<Msg>,
 ) -> Result<Digests, Failure> {
+    let entry = &ctx.job.files[idx];
     let dest = ctx.dest(d);
     let fail = |e: io::Error, what: &str| {
         let f = match classify_dest(&e, dest) {
@@ -764,24 +946,31 @@ fn writer(
                 #[cfg(feature = "fault-injection")]
                 let corrupted;
                 #[cfg(feature = "fault-injection")]
-                let data =
-                    if std::mem::take(&mut first_chunk) && ctx.fault.corrupt_dest == Some(d.0) {
+                let data = {
+                    let first = std::mem::take(&mut first_chunk);
+                    if first && ctx.fault.hang_dest == Some(d.0) {
+                        fault::hang();
+                    }
+                    if first && ctx.fault.corrupt_dest == Some(d.0) {
                         corrupted = fault::flip_first(data);
                         &corrupted[..]
                     } else {
                         data
-                    };
+                    }
+                };
                 if let Err(e) = file.write_all(data) {
                     drop(file);
                     return Err(fail(e, "write"));
                 }
                 ctx.dest_bytes[d.index()].fetch_add(data.len() as u64, Ordering::Relaxed);
+                ctx.tick(d);
                 since_sync += data.len() as u64;
                 if since_sync >= SYNC_INTERVAL {
                     if let Err(e) = file.sync_data() {
                         drop(file);
                         return Err(fail(e, "flush"));
                     }
+                    ctx.tick(d);
                     platform::drop_cache(&file);
                     since_sync = 0;
                 }
@@ -804,15 +993,14 @@ fn writer(
         drop(file);
         return Err(fail(e, "flush"));
     }
+    ctx.tick(d);
     platform::drop_cache(&file);
     drop(file);
 
-    let actual = match hash_path(
-        &part,
-        &ctx.job.settings.hashes,
-        ctx.cancel,
-        Some(&ctx.verified_bytes[d.index()]),
-    ) {
+    let actual = match hash_path(&part, &ctx.job.settings.hashes, &ctx.cancel, |n| {
+        ctx.verified_bytes[d.index()].fetch_add(n, Ordering::Relaxed);
+        ctx.tick(d);
+    }) {
         Ok(v) => v,
         Err(HashErr::Cancelled) => {
             let _ = std::fs::remove_file(&part);
@@ -825,9 +1013,9 @@ fn writer(
         return Err(Failure::HashMismatch { expected, actual });
     }
 
-    if !same_volume_dir(&dest.root, dest.volume.dev) {
+    if ctx.dead(d).is_some() || !same_volume_dir(&dest.root, dest.volume.dev) {
         let _ = std::fs::remove_file(&part);
-        return Err(Failure::DestinationOffline);
+        return Err(ctx.dead(d).unwrap_or(Failure::DestinationOffline));
     }
     match platform::rename_noreplace(&part, &final_path) {
         Ok(()) => Ok(actual),
@@ -846,12 +1034,13 @@ enum HashErr {
     Cancelled,
 }
 
-/// Hashes a file read from the device (page cache bypassed or dropped first).
+/// Hashes a file read from the device (page cache bypassed or dropped first). `on_read` is
+/// called with the size of every block read.
 fn hash_path(
     path: &Path,
     list: &HashList,
     cancel: &CancelToken,
-    counter: Option<&AtomicU64>,
+    on_read: impl Fn(u64),
 ) -> Result<Digests, HashErr> {
     let size = std::fs::symlink_metadata(path).map_err(HashErr::Io)?.len();
     let mut r = platform::open_uncached(path).map_err(HashErr::Io)?;
@@ -871,9 +1060,7 @@ fn hash_path(
             Err(e) => return Err(HashErr::Io(e)),
         };
         h.update(&buf[..n]);
-        if let Some(c) = counter {
-            c.fetch_add(n as u64, Ordering::Relaxed);
-        }
+        on_read(n as u64);
     }
     Ok(h.finish())
 }
@@ -920,20 +1107,29 @@ fn classify_source(e: &io::Error, ctx: &Ctx) -> Failure {
 }
 
 /// Test-only fault injection, compiled in with the `fault-injection` feature.
-/// `SHORTEND_FAULT=corrupt-dest=N` flips the first byte written to destination N for every
-/// file, so read-back verification must catch it.
+/// `SHORTEND_FAULT` holds comma-separated faults:
+/// - `corrupt-dest=N`: flip the first byte written to destination N for every file, so
+///   read-back verification must catch it;
+/// - `hang-dest=N`: the writer for destination N blocks forever on its first chunk, like a
+///   drive that stopped answering, so the stall watchdog must catch it.
 #[cfg(feature = "fault-injection")]
 mod fault {
     pub struct Fault {
         pub corrupt_dest: Option<u16>,
+        pub hang_dest: Option<u16>,
     }
 
     impl Fault {
         pub fn from_env() -> Self {
-            let corrupt_dest = std::env::var("SHORTEND_FAULT")
-                .ok()
-                .and_then(|v| v.strip_prefix("corrupt-dest=").and_then(|n| n.parse().ok()));
-            Self { corrupt_dest }
+            let spec = std::env::var("SHORTEND_FAULT").unwrap_or_default();
+            let get = |key: &str| {
+                spec.split(',')
+                    .find_map(|f| f.trim().strip_prefix(key).and_then(|n| n.parse().ok()))
+            };
+            Self {
+                corrupt_dest: get("corrupt-dest="),
+                hang_dest: get("hang-dest="),
+            }
         }
     }
 
@@ -943,5 +1139,11 @@ mod fault {
             *b ^= 0xff;
         }
         v
+    }
+
+    pub fn hang() -> ! {
+        loop {
+            std::thread::park();
+        }
     }
 }

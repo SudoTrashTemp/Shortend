@@ -76,6 +76,9 @@ pub fn render(rep: &JobReport) -> String {
             human_bytes(st.bytes_written),
             human_rate(st.bytes_written, rep.elapsed())
         );
+        if let Some(f) = &st.failure {
+            let _ = writeln!(s, "      DESTINATION FAILED: {f}");
+        }
         if matches!(
             d.volume.fs_type,
             crate::fs::FsType::Smb | crate::fs::FsType::Nfs

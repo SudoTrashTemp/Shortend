@@ -6,6 +6,7 @@ pub mod preflight;
 pub mod state;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::SyncSender;
 
 use jiff::Timestamp;
@@ -105,9 +106,11 @@ pub fn list_jobs() -> Result<Vec<JobListing>> {
     Ok(out)
 }
 
-fn open_journal(dir: &std::path::Path) -> Result<Journal> {
+fn open_journal(dir: &std::path::Path) -> Result<Arc<Journal>> {
     let path = dir.join(state::JOURNAL_FILE);
-    Journal::open(&path).map_err(|e| Error::io_at(&path, e))
+    Journal::open(&path)
+        .map(Arc::new)
+        .map_err(|e| Error::io_at(&path, e))
 }
 
 fn append(journal: &Journal, dir: &std::path::Path, rec: &Record) -> Result<()> {
@@ -117,7 +120,7 @@ fn append(journal: &Journal, dir: &std::path::Path, rec: &Record) -> Result<()> 
 fn finish(
     job: &Job,
     dir: &std::path::Path,
-    journal: &Journal,
+    journal: &Arc<Journal>,
     replay: Option<&journal::Replay>,
     events: &SyncSender<Event>,
     cancel: &CancelToken,
