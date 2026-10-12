@@ -82,9 +82,9 @@ struct CopyArgs {
     /// Don't write the TXT report.
     #[arg(long)]
     no_txt: bool,
-    /// Manifest written into every destination: v2 (ASC MHL), v1.1, or none.
-    #[arg(long, default_value = "v2", value_parser = ["v2", "v1.1", "none"])]
-    mhl: String,
+    /// Manifests written into every destination: v2 (ASC MHL), v1.1, both (v2,v1.1), or none.
+    #[arg(long, default_value = "v2", value_name = "v2|v1.1|v2,v1.1|none", value_parser = parse_mhl)]
+    mhl: MhlList,
     /// Don't write the PDF report.
     #[arg(long)]
     no_pdf: bool,
@@ -145,6 +145,32 @@ fn main() -> ExitCode {
     }
 }
 
+/// `--mhl` value: a comma-separated list of manifest versions.
+#[derive(Clone)]
+struct MhlList(Vec<MhlVersion>);
+
+fn parse_mhl(s: &str) -> Result<MhlList, String> {
+    if s == "none" {
+        return Ok(MhlList(Vec::new()));
+    }
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let v = match part.trim() {
+            "v2" => MhlVersion::V2,
+            "v1.1" => MhlVersion::V1_1,
+            other => {
+                return Err(format!(
+                    "unknown manifest '{other}' (expected v2, v1.1 or none)"
+                ));
+            }
+        };
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    Ok(MhlList(out))
+}
+
 fn parse_dest(i: usize, s: &str) -> (String, PathBuf) {
     if let Some((label, path)) = s.split_once('=')
         && !label.is_empty()
@@ -180,11 +206,7 @@ fn copy(a: CopyArgs) -> shortend_core::Result<ExitCode> {
             reports: ReportOptions {
                 csv: !a.no_csv,
                 txt: !a.no_txt,
-                mhl: match a.mhl.as_str() {
-                    "v1.1" => Some(MhlVersion::V1_1),
-                    "none" => None,
-                    _ => Some(MhlVersion::V2),
-                },
+                mhl: a.mhl.0,
                 pdf: (!a.no_pdf).then_some(PdfOptions { logo: a.logo }),
             },
             ..JobSettings::default()
@@ -356,6 +378,13 @@ fn print_summary(r: &JobReport) -> ExitCode {
     }
     for issue in &r.manifest_issues {
         println!("  MANIFEST  {issue}");
+    }
+    if !r.manifest_omissions.is_empty() {
+        println!(
+            "  NOT IN MHL v1.1 ({} zero-byte files): {}",
+            r.manifest_omissions.len(),
+            r.manifest_omissions.join(", ")
+        );
     }
     for m in &r.manifests {
         println!("  manifest {}", m.display());

@@ -86,16 +86,37 @@ pub struct Destination {
 pub struct ReportOptions {
     pub csv: bool,
     pub txt: bool,
-    /// Manifest written into every destination's target folder. `None` writes none.
-    #[serde(default = "default_mhl")]
-    pub mhl: Option<MhlVersion>,
+    /// Manifests written into every destination's target folder (any of ASC MHL v2 and MHL
+    /// v1.1; empty writes none). A single value is accepted when reading.
+    #[serde(default = "default_mhl", deserialize_with = "one_or_many")]
+    pub mhl: Vec<MhlVersion>,
     /// PDF report. `None` writes none.
     #[serde(default = "default_pdf")]
     pub pdf: Option<PdfOptions>,
 }
 
-fn default_mhl() -> Option<MhlVersion> {
-    Some(MhlVersion::V2)
+fn default_mhl() -> Vec<MhlVersion> {
+    vec![MhlVersion::V2]
+}
+
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<MhlVersion>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(MhlVersion),
+        Many(Vec<MhlVersion>),
+    }
+    let mut v = match OneOrMany::deserialize(d)? {
+        OneOrMany::One(x) => vec![x],
+        OneOrMany::Many(v) => v,
+    };
+    let mut seen = Vec::new();
+    v.retain(|x| {
+        let new = !seen.contains(x);
+        seen.push(*x);
+        new
+    });
+    Ok(v)
 }
 
 fn default_pdf() -> Option<PdfOptions> {
@@ -391,7 +412,10 @@ pub struct JobReport {
     /// Problems between the card and its own ASC MHL history (e.g. files the history lists
     /// that are missing from the card). Any entry fails the job.
     pub manifest_issues: Vec<String>,
-    /// MHL files written (one per destination).
+    /// Files verified on the destinations but left out of an MHL v1.1 manifest because that
+    /// format cannot list zero-byte files. Non-empty also fails the job (see `manifest_issues`).
+    pub manifest_omissions: Vec<String>,
+    /// MHL files written (one per destination and manifest version).
     pub manifests: Vec<PathBuf>,
     pub report_files: Vec<PathBuf>,
 }

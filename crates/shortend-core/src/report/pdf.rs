@@ -482,10 +482,17 @@ fn render_with(
         ("Verification", verification),
         (
             "Manifest",
-            job.settings
-                .reports
-                .mhl
-                .map_or_else(|| "none".to_owned(), |v| v.to_string()),
+            if job.settings.reports.mhl.is_empty() {
+                "none".to_owned()
+            } else {
+                job.settings
+                    .reports
+                    .mhl
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            },
         ),
     ]);
 
@@ -537,8 +544,24 @@ fn render_with(
     }
 
     // --- problems ----------------------------------------------------------------------------
+    if !rep.manifest_omissions.is_empty() {
+        w.heading(&format!(
+            "Not listed in the MHL v1.1 manifest ({} zero-byte files)",
+            rep.manifest_omissions.len()
+        ));
+        w.para(
+            Face::Regular,
+            8.0,
+            RED,
+            0.0,
+            "MHL v1.1 cannot record zero-byte files. These were copied and verified, and are listed in the ASC MHL v2 manifest and the file list below:",
+        );
+        for f in &rep.manifest_omissions {
+            w.para(Face::Regular, 8.0, BLACK, 10.0, f);
+        }
+    }
     if !rep.manifest_issues.is_empty() {
-        w.heading("Card vs. its own ASC MHL");
+        w.heading("Manifest problems");
         for m in &rep.manifest_issues {
             w.para(Face::Regular, 8.0, RED, 0.0, m);
         }

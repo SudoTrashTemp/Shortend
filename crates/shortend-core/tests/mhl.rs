@@ -150,7 +150,7 @@ fn offload(
     card: &Path,
     dest: &Path,
     hashes: Vec<HashAlgorithm>,
-    mhl: Option<MhlVersion>,
+    mhl: Vec<MhlVersion>,
 ) -> shortend_core::JobReport {
     let mut s = spec(card, &[dest]);
     s.settings.hashes = HashList::new(hashes).unwrap();
@@ -171,7 +171,7 @@ fn fresh_offload_writes_valid_ascmhl_that_verifies() {
         &card,
         &dest,
         vec![HashAlgorithm::Xxh64, HashAlgorithm::Md5, HashAlgorithm::C4],
-        Some(MhlVersion::V2),
+        vec![MhlVersion::V2],
     );
     assert_eq!(rep.state, JobState::Completed);
     let target = dest.join("A001");
@@ -236,7 +236,7 @@ fn second_generation_on_reference_histories() {
 
         let dest = tmp.path().join("out");
         std::fs::create_dir(&dest).unwrap();
-        let rep = offload(&card, &dest, vec![a], Some(MhlVersion::V2));
+        let rep = offload(&card, &dest, vec![a], vec![MhlVersion::V2]);
         assert_eq!(
             rep.state,
             JobState::Completed,
@@ -281,7 +281,7 @@ fn history_algorithms_are_added_to_the_job() {
     let dest = tmp.path().join("out");
     std::fs::create_dir(&dest).unwrap();
     // The job asks for c4 only; the history uses xxh64 and md5.
-    let rep = offload(&card, &dest, vec![HashAlgorithm::C4], Some(MhlVersion::V2));
+    let rep = offload(&card, &dest, vec![HashAlgorithm::C4], vec![MhlVersion::V2]);
     assert_eq!(rep.state, JobState::Completed);
     assert_eq!(
         rep.job.settings.hashes.as_slice(),
@@ -321,7 +321,7 @@ fn card_that_contradicts_its_history_fails_the_job() {
         &card,
         &dest,
         vec![HashAlgorithm::Xxh64],
-        Some(MhlVersion::V2),
+        vec![MhlVersion::V2],
     );
     assert_eq!(rep.state, JobState::CompletedWithFailures);
     assert!(
@@ -371,7 +371,7 @@ fn damaged_card_history_is_refused() {
     std::fs::create_dir(&dest).unwrap();
     init_state_dir();
     let mut s = spec(&card, &[&dest]);
-    s.settings.reports.mhl = Some(MhlVersion::V2);
+    s.settings.reports.mhl = vec![MhlVersion::V2];
     match shortend_core::plan(s.clone()) {
         Err(Error::Preflight(p)) => assert!(
             p.iter()
@@ -381,7 +381,7 @@ fn damaged_card_history_is_refused() {
         other => panic!("expected refusal, got {:?}", other.map(|j| j.id)),
     }
     // Without a manifest the card can still be offloaded (its history is copied as files).
-    s.settings.reports.mhl = None;
+    s.settings.reports.mhl = Vec::new();
     assert!(shortend_core::plan(s).is_ok());
 }
 
@@ -393,24 +393,24 @@ fn unrepresentable_algorithms_are_refused_or_reported() {
     let dest = tmp.path().join("out");
     std::fs::create_dir(&dest).unwrap();
     init_state_dir();
-    let plan = |hashes: Vec<HashAlgorithm>, mhl: Option<MhlVersion>| {
+    let plan = |hashes: Vec<HashAlgorithm>, mhl: Vec<MhlVersion>| {
         let mut s = spec(&card, &[&dest]);
         s.settings.hashes = HashList::new(hashes).unwrap();
         s.settings.reports.mhl = mhl;
         shortend_core::plan(s)
     };
     assert!(matches!(
-        plan(vec![HashAlgorithm::Sha256], Some(MhlVersion::V2)),
+        plan(vec![HashAlgorithm::Sha256], vec![MhlVersion::V2]),
         Err(Error::Preflight(_))
     ));
     assert!(matches!(
-        plan(vec![HashAlgorithm::Xxh128], Some(MhlVersion::V1_1)),
+        plan(vec![HashAlgorithm::Xxh128], vec![MhlVersion::V1_1]),
         Err(Error::Preflight(_))
     ));
-    assert!(plan(vec![HashAlgorithm::Sha256], None).is_ok());
+    assert!(plan(vec![HashAlgorithm::Sha256], Vec::new()).is_ok());
     let job = plan(
         vec![HashAlgorithm::Xxh64, HashAlgorithm::Sha256],
-        Some(MhlVersion::V2),
+        vec![MhlVersion::V2],
     )
     .unwrap();
     assert!(
@@ -425,6 +425,7 @@ fn mhl_v11_output_validates_and_verifies() {
     let tmp = tempfile::tempdir().unwrap();
     let card = tmp.path().join("A001");
     make_card(&card);
+    std::fs::remove_file(card.join("empty.bin")).unwrap();
     let dest = tmp.path().join("out");
     std::fs::create_dir(&dest).unwrap();
     let rep = offload(
@@ -435,29 +436,132 @@ fn mhl_v11_output_validates_and_verifies() {
             HashAlgorithm::Md5,
             HashAlgorithm::Sha1,
         ],
-        Some(MhlVersion::V1_1),
+        vec![MhlVersion::V1_1],
     );
     assert_eq!(rep.state, JobState::Completed);
     assert_eq!(rep.manifests.len(), 1);
+    assert!(rep.manifest_omissions.is_empty());
     let m = &rep.manifests[0];
     assert_schema_valid(m, "MediaHashList_v1_1.xsd");
-    assert!(
-        rep.warnings.iter().any(|w| w.contains("zero-byte")),
-        "{:?}",
-        rep.warnings
-    );
     let r = &mhl::verify_folder(&dest.join("A001")).unwrap()[0];
     assert!(r.ok(), "{:?}", r.issues);
-    assert_eq!(
-        r.verified,
-        make_card_file_count(&card) - 1,
-        "all but the empty file"
-    );
+    assert_eq!(r.verified, make_card_file_count(&card));
     if let Some(o) = tool("simple-mhl", &["verify".as_ref(), m.as_os_str()]) {
         assert!(
             o.status.success(),
             "simple-mhl rejects our v1.1:\n{}",
             String::from_utf8_lossy(&o.stdout)
+        );
+    }
+}
+
+/// MHL v1.1 cannot list zero-byte files. As the only manifest that would leave files out of
+/// the record, so the job is refused; next to ASC MHL v2 the omission is loud: the job fails
+/// (exit 1), and the files are named in the summary, CSV, TXT and PDF.
+#[test]
+fn zero_byte_files_and_mhl_v11() {
+    let tmp = tempfile::tempdir().unwrap();
+    let card = tmp.path().join("A001");
+    make_card(&card); // contains empty.bin
+    let dest = tmp.path().join("out");
+    std::fs::create_dir(&dest).unwrap();
+    init_state_dir();
+
+    let mut s = spec(&card, &[&dest]);
+    s.settings.reports.mhl = vec![MhlVersion::V1_1];
+    match shortend_core::plan(s) {
+        Err(Error::Preflight(p)) => assert!(
+            p.iter()
+                .any(|x| x.contains("cannot list zero-byte files") && x.contains("empty.bin")),
+            "{p:?}"
+        ),
+        other => panic!("expected refusal, got {:?}", other.map(|j| j.id)),
+    }
+    assert_eq!(
+        std::fs::read_dir(&dest).unwrap().count(),
+        0,
+        "nothing written"
+    );
+
+    let rep = offload(
+        &card,
+        &dest,
+        vec![HashAlgorithm::Xxh64],
+        vec![MhlVersion::V2, MhlVersion::V1_1],
+    );
+    assert_eq!(
+        rep.state,
+        JobState::CompletedWithFailures,
+        "an incomplete manifest fails the job"
+    );
+    assert_eq!(rep.manifest_omissions, ["empty.bin"]);
+    assert!(
+        rep.manifest_issues
+            .iter()
+            .any(|m| m.contains("does not list 1 zero-byte file") && m.contains("empty.bin"))
+    );
+    assert!(
+        rep.outcomes.iter().all(|o| o.all_ok()),
+        "every file is still verified"
+    );
+    assert_eq!(rep.manifests.len(), 2);
+    let target = dest.join("A001");
+
+    // ASC MHL v2 lists the zero-byte file; the v1.1 file next to the media is ignored by it.
+    let first = std::fs::read_to_string(&generations(&target)[0]).unwrap();
+    assert!(
+        first.contains(r#"<path size="0""#) && first.contains(">empty.bin</path>"),
+        "{first}"
+    );
+    assert_history_valid(&target);
+    assert_reference_verifies(&target);
+    let v11 = rep
+        .manifests
+        .iter()
+        .find(|m| m.extension().unwrap() == "mhl" && m.parent() == Some(&*target))
+        .unwrap();
+    assert_schema_valid(v11, "MediaHashList_v1_1.xsd");
+    assert!(!std::fs::read_to_string(v11).unwrap().contains("empty.bin"));
+
+    // Named in every report.
+    let reports = target.join("_ShortEnd");
+    let read = |ext: &str| {
+        let p = std::fs::read_dir(&reports)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().unwrap() == ext)
+            .unwrap();
+        std::fs::read(p).unwrap()
+    };
+    let csv = String::from_utf8(read("csv")).unwrap();
+    assert!(
+        csv.lines()
+            .any(|l| l.starts_with("empty.bin,")
+                && l.contains("not listed in the MHL v1.1 manifest")),
+        "{csv}"
+    );
+    let txt = String::from_utf8(read("txt")).unwrap();
+    assert!(
+        txt.contains("Not listed in the MHL v1.1 manifest") && txt.contains("Result:       FAIL"),
+        "{txt}"
+    );
+    let pdf = read("pdf");
+    let pdf_path = tmp.path().join("r.pdf");
+    std::fs::write(&pdf_path, pdf).unwrap();
+    if let Some(o) = tool(
+        "pdftotext",
+        &[
+            "-enc".as_ref(),
+            "UTF-8".as_ref(),
+            pdf_path.as_os_str(),
+            "-".as_ref(),
+        ],
+    ) {
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            text.contains("Not listed in the MHL v1.1 manifest"),
+            "{text}"
         );
     }
 }
@@ -511,7 +615,7 @@ fn empty_folders_hash_like_the_reference() {
         &card,
         &dest,
         vec![HashAlgorithm::Xxh64],
-        Some(MhlVersion::V2),
+        vec![MhlVersion::V2],
     );
     assert_eq!(rep.state, JobState::Completed);
     let ours = dir_hashes(&generations(&dest.join("CARD"))[0]);
@@ -530,7 +634,7 @@ fn resume_keeps_the_extended_chain_and_writes_one_generation() {
         &card,
         &dest,
         vec![HashAlgorithm::Xxh64],
-        Some(MhlVersion::V2),
+        vec![MhlVersion::V2],
     );
     assert_eq!(rep.state, JobState::Completed);
     let target = dest.join("CARD");

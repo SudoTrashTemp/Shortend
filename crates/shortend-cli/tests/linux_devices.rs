@@ -59,7 +59,11 @@ macro_rules! privileged {
 fn notice(msg: &str) {
     if let Some(path) = std::env::var_os("SHORTEND_RESULTS_FILE") {
         use std::io::Write as _;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             let _ = writeln!(f, "{msg}");
         }
     }

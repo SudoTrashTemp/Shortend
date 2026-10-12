@@ -97,6 +97,22 @@ pub fn render(rep: &JobReport) -> String {
         }
     }
 
+    if !rep.manifest_issues.is_empty() {
+        let _ = writeln!(s, "\nManifest problems");
+        for m in &rep.manifest_issues {
+            let _ = writeln!(s, "  - {m}");
+        }
+    }
+    if !rep.manifest_omissions.is_empty() {
+        let _ = writeln!(
+            s,
+            "\nNot listed in the MHL v1.1 manifest (zero-byte files; verified, and listed in the ASC MHL v2)"
+        );
+        for m in &rep.manifest_omissions {
+            let _ = writeln!(s, "  {m}");
+        }
+    }
+
     if !rep.warnings.is_empty() {
         let _ = writeln!(s, "\nWarnings");
         for w in &rep.warnings {

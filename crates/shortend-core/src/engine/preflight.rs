@@ -355,31 +355,54 @@ fn check_manifest_options(
     use crate::hash::{HashAlgorithm, HashList};
     use crate::report::mhl::{MhlVersion, v2};
 
-    let Some(version) = spec.settings.reports.mhl else {
-        return;
-    };
-    let hashes = spec.settings.hashes.as_slice().to_vec();
-    let (written, dropped): (Vec<HashAlgorithm>, Vec<HashAlgorithm>) =
-        hashes.iter().partition(|a| version.supports(**a));
-    if written.is_empty() {
-        let names: Vec<String> = hashes.iter().map(ToString::to_string).collect();
-        problems.push(format!(
-            "{version} cannot record {} (it supports {}); choose another checksum or turn the manifest off",
-            names.join("+"),
-            match version {
-                MhlVersion::V2 => "c4, md5, sha1, xxh128, xxh3, xxh64",
-                MhlVersion::V1_1 => "md5, sha1, xxh64",
-            }
-        ));
+    let versions = spec.settings.reports.mhl.clone();
+    if versions.is_empty() {
         return;
     }
-    for a in dropped {
-        warnings.push(format!(
-            "{a} checksums appear in the reports but cannot be written to {version}"
-        ));
+    let hashes = spec.settings.hashes.as_slice().to_vec();
+    for &version in &versions {
+        let (written, dropped): (Vec<HashAlgorithm>, Vec<HashAlgorithm>) =
+            hashes.iter().partition(|a| version.supports(**a));
+        if written.is_empty() {
+            let names: Vec<String> = hashes.iter().map(ToString::to_string).collect();
+            problems.push(format!(
+                "{version} cannot record {} (it supports {}); choose another checksum or turn that manifest off",
+                names.join("+"),
+                match version {
+                    MhlVersion::V2 => "c4, md5, sha1, xxh128, xxh3, xxh64",
+                    MhlVersion::V1_1 => "md5, sha1, xxh64",
+                }
+            ));
+            continue;
+        }
+        for a in dropped {
+            warnings.push(format!(
+                "{a} checksums appear in the reports but cannot be written to {version}"
+            ));
+        }
     }
 
-    if version != MhlVersion::V2 {
+    // MHL v1.1 cannot list zero-byte files (its schema requires size >= 1). As the only
+    // manifest that would be an incomplete record of the card, so the job is refused.
+    if versions.contains(&MhlVersion::V1_1) {
+        let empty: Vec<&str> = found
+            .files
+            .iter()
+            .filter(|f| f.size == 0)
+            .map(|f| f.rel.as_str())
+            .collect();
+        if !empty.is_empty() && !versions.contains(&MhlVersion::V2) {
+            let shown: Vec<&str> = empty.iter().take(10).copied().collect();
+            problems.push(format!(
+                "MHL v1.1 cannot list zero-byte files and the card has {} ({}{}); add ASC MHL v2 (--mhl v2,v1.1) so every file is in a manifest, or use --mhl v2",
+                empty.len(),
+                shown.join(", "),
+                if empty.len() > shown.len() { ", …" } else { "" }
+            ));
+        }
+    }
+
+    if !versions.contains(&MhlVersion::V2) {
         return;
     }
     let nested = found

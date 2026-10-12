@@ -33,6 +33,13 @@ pub fn render(rep: &JobReport) -> Result<Vec<u8>, ::csv::Error> {
             row.push(status_word(&d.status).to_owned());
             row.push(match &d.status {
                 FileStatus::Failed(f) => f.to_string(),
+                _ if rep
+                    .manifest_omissions
+                    .iter()
+                    .any(|m| m == o.entry.rel.as_str()) =>
+                {
+                    "not listed in the MHL v1.1 manifest (zero-byte file)".to_owned()
+                }
                 _ => String::new(),
             });
             w.write_record(&row)?;

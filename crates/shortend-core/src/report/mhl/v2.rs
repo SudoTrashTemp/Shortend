@@ -356,6 +356,14 @@ pub struct Creator {
     pub comment: Option<String>,
 }
 
+/// `<processinfo>` settings of a new generation.
+pub struct Process<'a> {
+    /// `in-place`, `transfer` or `flatten`.
+    pub kind: &'a str,
+    /// Ignore patterns added to the history's (e.g. a sibling MHL v1.1 file written alongside).
+    pub extra_ignore: &'a [String],
+}
+
 /// A file whose hash no longer matches what the history recorded for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mismatch {
@@ -384,12 +392,16 @@ pub fn write_generation(
     files: &[GenFile<'_>],
     dirs: &[&str],
     creator: &Creator,
-    process: &str,
+    process: &Process<'_>,
     now: Timestamp,
 ) -> Result<Generation, MhlError> {
     let mut patterns = History::ignore_spec(history).patterns().to_vec();
-    if !patterns.iter().any(|p| p == SHORTEND_PATTERN) {
-        patterns.push(SHORTEND_PATTERN.to_owned());
+    for p in
+        std::iter::once(SHORTEND_PATTERN).chain(process.extra_ignore.iter().map(String::as_str))
+    {
+        if !patterns.iter().any(|x| x == p) {
+            patterns.push(p.to_owned());
+        }
     }
     let spec = IgnoreSpec::new(patterns);
 
@@ -607,7 +619,7 @@ pub fn write_generation(
 
     // processinfo
     let _ = writeln!(out, "  <processinfo>");
-    let _ = writeln!(out, "    <process>{process}</process>");
+    let _ = writeln!(out, "    <process>{}</process>", process.kind);
     if let Some(r) = root_hashes.as_ref().filter(|r| !r.is_empty()) {
         let _ = writeln!(out, "    <roothash>");
         write_dir_hashes(&mut out, r, "      ");

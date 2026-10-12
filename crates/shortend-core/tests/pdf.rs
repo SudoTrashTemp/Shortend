@@ -156,7 +156,7 @@ fn ten_thousand_file_report() {
     let mut s = spec(&card, &[&dest]);
     s.settings.reports.csv = false;
     s.settings.reports.txt = false;
-    s.settings.reports.mhl = None;
+    s.settings.reports.mhl = Vec::new();
     let (mut rep, _) = run(s);
     let template = rep.outcomes[0].clone();
     rep.outcomes = (0..10_000)

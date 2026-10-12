@@ -137,6 +137,7 @@ fn finish(
         dest_stats: out.dest_stats,
         warnings: out.warnings,
         manifest_issues: Vec::new(),
+        manifest_omissions: Vec::new(),
         manifests: Vec::new(),
         report_files: Vec::new(),
     };

@@ -13,11 +13,14 @@ use crate::report::mhl::{self, MhlVersion, v2, v11};
 
 /// Writes manifests for a finished run and folds any card-vs-manifest problems into `rep`.
 pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Replay>) {
-    let Some(version) = rep.job.settings.reports.mhl else {
+    let versions = rep.job.settings.reports.mhl.clone();
+    if versions.is_empty() {
         return;
-    };
+    }
     let now = Timestamp::now();
     let mut warnings = Vec::new();
+    let mut issues = Vec::new();
+    let mut omitted: Vec<String> = Vec::new();
     let mut written = Vec::new();
 
     for (i, d) in rep.job.destinations.iter().enumerate() {
@@ -54,29 +57,59 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
             continue; // this destination already has a manifest covering everything it holds
         }
 
-        let result = match version {
-            MhlVersion::V2 => write_v2(rep, i, &ok, now, &mut warnings),
-            MhlVersion::V1_1 => write_v11(rep, i, &ok, now, &mut warnings),
-        };
-        match result {
-            Ok(path) => {
-                let file = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                if journal.append(&Record::Mhl { dest: id, file }).is_err() {
-                    warnings.push("could not record the manifest in the job journal".into());
+        // v1.1 first, so the ASC MHL generation can ignore the v1.1 file next to the media
+        // (otherwise every ASC MHL verify would report it as a new, unlisted file).
+        let mut order = versions.clone();
+        order.sort_by_key(|v| *v == MhlVersion::V2);
+        let mut extra_ignore = Vec::new();
+        for &version in &order {
+            let result = match version {
+                MhlVersion::V2 => write_v2(rep, i, &ok, now, &extra_ignore, &mut warnings),
+                MhlVersion::V1_1 => write_v11(rep, i, &ok, now).map(|w| {
+                    if !w.skipped_empty.is_empty() {
+                        let n = w.skipped_empty.len();
+                        let shown: Vec<&str> = w.skipped_empty.iter().take(10).map(String::as_str).collect();
+                        issues.push(format!(
+                            "{}: the MHL v1.1 manifest does not list {n} zero-byte file(s) (its schema cannot); they are verified and listed in the ASC MHL v2 and the CSV/TXT/PDF reports: {}{}",
+                            d.label,
+                            shown.join(", "),
+                            if n > shown.len() { ", …" } else { "" }
+                        ));
+                        for f in w.skipped_empty {
+                            if !omitted.contains(&f) {
+                                omitted.push(f);
+                            }
+                        }
+                    }
+                    if let Some(name) = w.path.file_name() {
+                        extra_ignore.push(name.to_string_lossy().into_owned());
+                    }
+                    w.path
+                }),
+            };
+            match result {
+                Ok(path) => {
+                    let file = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if journal.append(&Record::Mhl { dest: id, file }).is_err() {
+                        warnings.push("could not record the manifest in the job journal".into());
+                    }
+                    written.push(path);
                 }
-                written.push(path);
+                Err(e) => issues.push(format!("{}: could not write {version}: {e}", d.label)),
             }
-            Err(e) => warnings.push(format!("{}: could not write {version}: {e}", d.label)),
         }
     }
     rep.manifests.extend(written);
     rep.warnings.extend(warnings);
+    rep.manifest_issues.extend(issues);
+    omitted.sort();
+    rep.manifest_omissions = omitted;
     // After writing: a file that contradicts the card's history is still on the destination
     // and is recorded there with action `failed`.
-    if version == MhlVersion::V2 {
+    if versions.contains(&MhlVersion::V2) {
         check_card(rep);
     }
     if !rep.manifest_issues.is_empty() && rep.state == JobState::Completed {
@@ -147,6 +180,7 @@ fn write_v2(
     i: usize,
     ok: &[(usize, &Digests)],
     now: Timestamp,
+    extra_ignore: &[String],
     warnings: &mut Vec<String>,
 ) -> Result<std::path::PathBuf, mhl::MhlError> {
     let d = &rep.job.destinations[i];
@@ -184,7 +218,10 @@ fn write_v2(
         &files,
         &dirs,
         &creator,
-        "transfer",
+        &v2::Process {
+            kind: "transfer",
+            extra_ignore,
+        },
         now,
     )?;
 
@@ -201,8 +238,7 @@ fn write_v11(
     i: usize,
     ok: &[(usize, &Digests)],
     now: Timestamp,
-    warnings: &mut Vec<String>,
-) -> Result<std::path::PathBuf, mhl::MhlError> {
+) -> Result<v11::Written, mhl::MhlError> {
     let d = &rep.job.destinations[i];
     let entries: Vec<v11::Entry<'_>> = ok
         .iter()
@@ -228,13 +264,5 @@ fn write_v11(
         started: rep.started,
         finished: rep.finished,
     };
-    let written = v11::write(&d.target, &entries, &creator, now)?;
-    if !written.skipped_empty.is_empty() {
-        let n = written.skipped_empty.len();
-        warnings.push(format!(
-            "{}: {n} zero-byte file(s) not listed in the MHL v1.1 (its schema requires size ≥ 1); they are in the CSV/TXT reports",
-            d.label
-        ));
-    }
-    Ok(written.path)
+    v11::write(&d.target, &entries, &creator, now)
 }
