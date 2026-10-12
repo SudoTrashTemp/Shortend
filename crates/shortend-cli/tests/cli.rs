@@ -331,7 +331,7 @@ fn sigkill_at_random_points_then_resume() {
     }
     let msg = format!("{mid_copy}/{iterations} kills landed mid-copy (baseline {full} ms)");
     if std::env::var_os("GITHUB_ACTIONS").is_some() {
-        println!("::notice title=sigkill-resume::{msg}");
+        println!("\n::notice title=sigkill-resume::{msg}");
     }
     eprintln!("{msg}");
     assert!(

@@ -17,7 +17,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -37,7 +37,7 @@ jobs:
   linux-devices:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install filesystem tools
@@ -51,7 +51,7 @@ jobs:
       - name: Device tests (root)
         run: |
           sudo env "PATH=$PATH" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
-            "RUSTFLAGS=$RUSTFLAGS" CARGO_TERM_COLOR=always \
+            "RUSTFLAGS=$RUSTFLAGS" CARGO_TERM_COLOR=always GITHUB_ACTIONS=true \
             SHORTEND_PRIVILEGED_TESTS=1 SHORTEND_REQUIRE_ALL_FS=1 \
             cargo test -p shortend-cli --test linux_devices -- --test-threads=1 --nocapture
       - name: Restore target ownership for the cache
@@ -62,7 +62,7 @@ jobs:
   memory-bound:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Peak RSS for a 4 GB file to 2 destinations

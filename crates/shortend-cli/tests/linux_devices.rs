@@ -56,7 +56,7 @@ macro_rules! privileged {
 /// Surfaces a line as a GitHub Actions annotation (visible via the checks API) and on stderr.
 fn notice(msg: &str) {
     if std::env::var_os("GITHUB_ACTIONS").is_some() {
-        println!("::notice title=linux-devices::{msg}");
+        println!("\n::notice title=linux-devices::{msg}");
     }
     eprintln!("{msg}");
 }
