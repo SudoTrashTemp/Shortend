@@ -93,5 +93,43 @@ pub fn canonical_dir(path: &Path) -> io::Result<std::path::PathBuf> {
     if !meta.is_dir() {
         return Err(io::Error::other("is not a directory"));
     }
-    std::fs::canonicalize(path)
+    std::fs::canonicalize(path).map(simplify)
+}
+
+/// On Windows, `canonicalize` returns verbatim paths (`\\?\C:\…`, `\\?\UNC\…`) that many
+/// tools and people cannot read. Converts them back to the ordinary form; Rust's file APIs
+/// still handle long paths themselves. A no-op elsewhere.
+pub fn simplify(p: std::path::PathBuf) -> std::path::PathBuf {
+    if !cfg!(windows) {
+        return p;
+    }
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => std::path::PathBuf::from(rest),
+        _ => p,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::path::PathBuf;
+
+    #[test]
+    fn verbatim_paths_are_simplified() {
+        assert_eq!(
+            super::simplify(PathBuf::from(r"\\?\C:\Media\A001")),
+            PathBuf::from(r"C:\Media\A001")
+        );
+        assert_eq!(
+            super::simplify(PathBuf::from(r"\\?\UNC\nas\share\x")),
+            PathBuf::from(r"\\nas\share\x")
+        );
+        assert_eq!(
+            super::simplify(PathBuf::from(r"C:\x")),
+            PathBuf::from(r"C:\x")
+        );
+    }
 }

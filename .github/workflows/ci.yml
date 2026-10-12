@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           [ -f test-output.txt ] || exit 0
-          grep -E "panicked at|^---- |^failures:|assertion|left:|right:|FAILED|error\[" test-output.txt \
+          grep -E -A4 "panicked at|^---- |FAILED|error\[" test-output.txt \
             | head -60 | while IFS= read -r line; do echo "::error title=test failure::${line//%/%25}"; done
       - name: Build (release)
         run: cargo build --workspace --release
