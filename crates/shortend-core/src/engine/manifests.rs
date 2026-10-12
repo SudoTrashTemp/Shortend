@@ -17,9 +17,6 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
         return;
     };
     let now = Timestamp::now();
-    let mut card_mismatches: Vec<v2::Mismatch> = Vec::new();
-    let mut card_checked = false;
-    let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut written = Vec::new();
 
@@ -58,14 +55,7 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
         }
 
         let result = match version {
-            MhlVersion::V2 => write_v2(rep, i, &ok, now, !card_checked, &mut issues, &mut warnings)
-                .map(|(path, mism)| {
-                    if !card_checked {
-                        card_checked = true;
-                        card_mismatches = mism;
-                    }
-                    path
-                }),
+            MhlVersion::V2 => write_v2(rep, i, &ok, now, &mut warnings),
             MhlVersion::V1_1 => write_v11(rep, i, &ok, now, &mut warnings),
         };
         match result {
@@ -84,47 +74,81 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
     }
     rep.manifests.extend(written);
     rep.warnings.extend(warnings);
-    rep.manifest_issues.extend(issues);
-
-    for m in card_mismatches {
-        rep.manifest_issues.push(format!(
-            "{}: card does not match its own ASC MHL ({} recorded {}, card has {})",
-            m.rel,
-            m.actual.algo(),
-            m.recorded,
-            m.actual.value()
-        ));
-        if let Some(o) = rep
-            .outcomes
-            .iter_mut()
-            .find(|o| o.entry.rel.as_str() == m.rel)
-        {
-            let actual = o.source.clone();
-            for d in &mut o.dests {
-                if d.status.is_ok() {
-                    d.status = FileStatus::Failed(Failure::SourceManifestMismatch {
-                        recorded: format!("{}:{}", m.actual.algo(), m.recorded),
-                        actual: actual.clone().expect("verified files have checksums"),
-                    });
-                }
-            }
-        }
+    // After writing: a file that contradicts the card's history is still on the destination
+    // and is recorded there with action `failed`.
+    if version == MhlVersion::V2 {
+        check_card(rep);
     }
     if !rep.manifest_issues.is_empty() && rep.state == JobState::Completed {
         rep.state = JobState::CompletedWithFailures;
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Compares the card with its own ASC MHL history (if it has one): files whose checksums
+/// contradict the history fail on every destination, and files the history lists that are
+/// missing from the card are reported. Runs on every completed run, including resumes.
+fn check_card(rep: &mut JobReport) {
+    let history = match v2::History::load(&rep.job.source.root) {
+        Ok(Some(h)) => h,
+        Ok(None) => return,
+        Err(e) => {
+            rep.manifest_issues.push(format!(
+                "the card's ASC MHL history could not be checked: {e}"
+            ));
+            return;
+        }
+    };
+    let mut issues = Vec::new();
+    for o in &mut rep.outcomes {
+        let (Some(rec), Some(actual)) = (history.record(o.entry.rel.as_str()), o.source.clone())
+        else {
+            continue;
+        };
+        if rec.original.is_none() {
+            continue;
+        }
+        let bad = actual.iter().find_map(|d| {
+            rec.first
+                .iter()
+                .find(|(a, v)| *a == d.algo() && *v != d.value())
+                .map(|(a, v)| format!("{a}:{v}"))
+        });
+        let Some(recorded) = bad else { continue };
+        issues.push(format!(
+            "{}: card does not match its own ASC MHL (recorded {recorded}, card has {})",
+            o.entry.rel, actual
+        ));
+        for d in &mut o.dests {
+            if d.status.is_ok() {
+                d.status = FileStatus::Failed(Failure::SourceManifestMismatch {
+                    recorded: recorded.clone(),
+                    actual: actual.clone(),
+                });
+            }
+        }
+    }
+    let on_card: HashSet<&str> = rep.job.files.iter().map(|f| f.rel.as_str()).collect();
+    let spec = v2::History::ignore_spec(Some(&history));
+    let mut missing: Vec<&str> = history
+        .file_paths()
+        .filter(|p| !on_card.contains(p) && !spec.is_ignored(p, false))
+        .collect();
+    missing.sort_unstable();
+    for m in missing {
+        issues.push(format!(
+            "{m}: listed in the card's ASC MHL but missing from the card"
+        ));
+    }
+    rep.manifest_issues.extend(issues);
+}
+
 fn write_v2(
     rep: &JobReport,
     i: usize,
     ok: &[(usize, &Digests)],
     now: Timestamp,
-    check_card: bool,
-    issues: &mut Vec<String>,
     warnings: &mut Vec<String>,
-) -> Result<(std::path::PathBuf, Vec<v2::Mismatch>), mhl::MhlError> {
+) -> Result<std::path::PathBuf, mhl::MhlError> {
     let d = &rep.job.destinations[i];
     let history = v2::History::load(&d.target)?;
     let files: Vec<v2::GenFile<'_>> = ok
@@ -164,30 +188,12 @@ fn write_v2(
         now,
     )?;
 
-    // Files the card's history lists that the card no longer has.
-    if let Some(h) = &history
-        && check_card
-    {
-        let on_card: HashSet<&str> = rep.job.files.iter().map(|f| f.rel.as_str()).collect();
-        let spec = v2::History::ignore_spec(Some(h));
-        let mut missing: Vec<String> = h
-            .file_paths()
-            .filter(|p| !on_card.contains(p) && !spec.is_ignored(p, false))
-            .map(str::to_owned)
-            .collect();
-        missing.sort();
-        for m in missing {
-            issues.push(format!(
-                "{m}: listed in the card's ASC MHL but missing from the card"
-            ));
-        }
-    }
     for u in &generation.unverifiable {
         warnings.push(format!(
             "{u}: the card's ASC MHL uses checksum algorithms this job did not compute; left out of the new generation"
         ));
     }
-    Ok((generation.path, generation.mismatches))
+    Ok(generation.path)
 }
 
 fn write_v11(

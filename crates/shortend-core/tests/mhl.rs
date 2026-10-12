@@ -349,6 +349,12 @@ fn card_that_contradicts_its_history_fails_the_job() {
     let text = std::fs::read_to_string(&gens[1]).unwrap();
     assert!(text.contains("<xxh64 action=\"failed\">"));
     assert_history_valid(&dest.join("CARD"));
+
+    // Resuming must not turn the job green: the card still contradicts its manifest.
+    let (r, _) = resume(&rep.job.id.to_string());
+    let r = r.unwrap();
+    assert_eq!(r.state, JobState::CompletedWithFailures);
+    assert_eq!(r.manifest_issues.len(), 2, "{:?}", r.manifest_issues);
 }
 
 #[test]
