@@ -385,10 +385,14 @@ fn peak_rss_is_bounded_for_huge_files() {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    eprintln!(
+    let msg = format!(
         "peak RSS {} MB for a {gb} GB file to 2 destinations",
         peak_kb / 1024
     );
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        println!("\n::notice title=memory-bound::{msg}");
+    }
+    eprintln!("{msg}");
     assert!(peak_kb > 0, "never sampled");
     assert!(peak_kb < 100 * 1024, "peak RSS {peak_kb} kB exceeds 100 MB");
 }
