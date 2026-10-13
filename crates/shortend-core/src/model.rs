@@ -454,6 +454,9 @@ pub enum Event {
         dest_bytes: Vec<u64>,
         total_bytes: u64,
     },
+    /// A file is being copied (sent without blocking; may be dropped if the receiver is
+    /// behind, so front ends use it for display only).
+    FileStarted(RelPath),
     FileFinished(Box<FileOutcome>),
     DestinationFailed {
         dest: DestId,

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::hash::HashAlgorithm;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MhlVersion {
     #[serde(rename = "v2")]
     V2,

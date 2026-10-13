@@ -53,19 +53,59 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
             .outcomes
             .iter()
             .any(|o| o.dests[i].status == FileStatus::Verified);
-        if replay.is_some_and(|r| r.mhl.contains(&id)) && !fresh {
-            continue; // this destination already has a manifest covering everything it holds
+
+        // A previous run stopped while writing an ASC MHL generation here: keep it if its
+        // chain entry was written, otherwise remove the orphan so the history is consistent.
+        let mut done: HashSet<MhlVersion> = replay
+            .map(|r| {
+                r.mhl_done
+                    .iter()
+                    .filter(|(dest, _)| *dest == id)
+                    .map(|(_, v)| *v)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (_, version, file) in replay
+            .iter()
+            .flat_map(|r| &r.mhl_pending)
+            .filter(|(dest, v, _)| *dest == id && *v == MhlVersion::V2)
+        {
+            match v2::settle_interrupted(&d.target, file) {
+                Ok(true) => {
+                    done.insert(*version);
+                    let _ = journal.append(&Record::Mhl {
+                        dest: id,
+                        version: Some(*version),
+                        file: file.clone(),
+                    });
+                }
+                Ok(false) => {}
+                Err(e) => issues.push(format!(
+                    "{}: an interrupted manifest write could not be tidied up: {e}",
+                    d.label
+                )),
+            }
         }
 
         // v1.1 first, so the ASC MHL generation can ignore the v1.1 file next to the media
-        // (otherwise every ASC MHL verify would report it as a new, unlisted file).
+        // (otherwise every ASC MHL verify would report it as a new, unlisted file). Its name
+        // is fixed per job, so a resumed run replaces its own file instead of adding one.
         let mut order = versions.clone();
         order.sort_by_key(|v| *v == MhlVersion::V2);
+        let v11_name = v11_file_name(rep, i);
         let mut extra_ignore = Vec::new();
+        if versions.contains(&MhlVersion::V1_1) {
+            extra_ignore.push(v11_name.clone());
+        }
         for &version in &order {
+            if done.contains(&version) && !fresh {
+                continue; // already written, and nothing new arrived since
+            }
             let result = match version {
-                MhlVersion::V2 => write_v2(rep, i, &ok, now, &extra_ignore, &mut warnings),
-                MhlVersion::V1_1 => write_v11(rep, i, &ok, now).map(|w| {
+                MhlVersion::V2 => {
+                    write_v2(rep, i, &ok, now, &extra_ignore, journal, &mut warnings)
+                }
+                MhlVersion::V1_1 => write_v11(rep, i, &ok, &v11_name).map(|w| {
                     if !w.skipped_empty.is_empty() {
                         let n = w.skipped_empty.len();
                         let shown: Vec<&str> = w.skipped_empty.iter().take(10).map(String::as_str).collect();
@@ -81,9 +121,6 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
                             }
                         }
                     }
-                    if let Some(name) = w.path.file_name() {
-                        extra_ignore.push(name.to_string_lossy().into_owned());
-                    }
                     w.path
                 }),
             };
@@ -93,7 +130,12 @@ pub(crate) fn write(rep: &mut JobReport, journal: &Journal, replay: Option<&Repl
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    if journal.append(&Record::Mhl { dest: id, file }).is_err() {
+                    let rec = Record::Mhl {
+                        dest: id,
+                        version: Some(version),
+                        file,
+                    };
+                    if journal.append(&rec).is_err() {
                         warnings.push("could not record the manifest in the job journal".into());
                     }
                     written.push(path);
@@ -181,14 +223,37 @@ fn check_card(rep: &mut JobReport) {
     rep.manifest_issues.extend(issues);
 }
 
+/// The job's MHL v1.1 file name on destination `i`: fixed by the job's creation time, and
+/// never the name of a file from the card.
+fn v11_file_name(rep: &JobReport, i: usize) -> String {
+    let target = &rep.job.destinations[i].target;
+    let mut name = v11::file_name(target, rep.job.created);
+    while rep.job.files.iter().any(|f| f.rel.as_str() == name) {
+        name = format!("{}_shortend.mhl", name.trim_end_matches(".mhl"));
+    }
+    name
+}
+
 fn write_v2(
     rep: &JobReport,
     i: usize,
     ok: &[(usize, &Digests)],
     now: Timestamp,
     extra_ignore: &[String],
+    journal: &Journal,
     warnings: &mut Vec<String>,
 ) -> Result<std::path::PathBuf, mhl::MhlError> {
+    let id = DestId(i as u16);
+    // Journaled (and synced) before the generation file exists, so a resume after a crash
+    // knows exactly which file it may have left behind.
+    let intent = |file: &str| {
+        journal.append(&Record::MhlIntent {
+            dest: id,
+            version: MhlVersion::V2,
+            file: file.to_owned(),
+        })?;
+        journal.sync()
+    };
     let d = &rep.job.destinations[i];
     let history = v2::History::load(&d.target)?;
     let files: Vec<v2::GenFile<'_>> = ok
@@ -227,6 +292,7 @@ fn write_v2(
         &v2::Process {
             kind: "transfer",
             extra_ignore,
+            before_write: Some(&intent),
         },
         now,
     )?;
@@ -243,7 +309,7 @@ fn write_v11(
     rep: &JobReport,
     i: usize,
     ok: &[(usize, &Digests)],
-    now: Timestamp,
+    file_name: &str,
 ) -> Result<v11::Written, mhl::MhlError> {
     let d = &rep.job.destinations[i];
     let entries: Vec<v11::Entry<'_>> = ok
@@ -270,5 +336,5 @@ fn write_v11(
         started: rep.started,
         finished: rep.finished,
     };
-    v11::write(&d.target, &entries, &creator, now)
+    v11::write(&d.target, &entries, &creator, file_name)
 }

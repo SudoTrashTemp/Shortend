@@ -74,6 +74,9 @@ fn reattached_drive_is_matched_by_uuid_and_a_different_drive_is_refused() {
         let other = tmp.path().join("other.dmg");
         let filler = tmp.path().join("filler.dmg");
         create(&img, fs, "SEDEST");
+        // exFAT/FAT volume IDs come from the format time (to the second); wait so the second
+        // drive really is different, as two real cards would be.
+        std::thread::sleep(std::time::Duration::from_millis(2100));
         create(&other, fs, "SEDEST");
         create(&filler, fs, "FILLER");
         let mnt = tmp.path().join("mnt");
@@ -106,6 +109,11 @@ fn reattached_drive_is_matched_by_uuid_and_a_different_drive_is_refused() {
         // A different drive with the same name at the same mount point.
         detach(mnt.to_str().unwrap());
         attach(&other, &mnt);
+        let other_uuid = shortend_core::fs::platform::volume_probe(&mnt)
+            .unwrap()
+            .fs_uuid;
+        eprintln!("{fs}: UUIDs {:?} / {other_uuid:?}", vol.fs_uuid);
+        assert_ne!(other_uuid, vol.fs_uuid, "{fs}: test images must differ");
         match resume(&id).0 {
             Err(Error::Preflight(p)) => {
                 assert!(p.join("\n").contains("different volume"), "{fs}: {p:?}")

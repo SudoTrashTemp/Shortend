@@ -99,6 +99,17 @@ impl History {
             Err(e) => return Err(MhlError::io(&dir, e)),
         }
         let chain_path = dir.join(CHAIN_FILE);
+        let has_generations = std::fs::read_dir(&dir)
+            .map_err(|e| MhlError::io(&dir, e))?
+            .flatten()
+            .any(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.ends_with(".mhl") && !n.starts_with("._")
+            });
+        if !chain_path.is_file() && !has_generations {
+            // An empty folder (e.g. left by an interrupted first generation): no history yet.
+            return Ok(None);
+        }
         if !chain_path.is_file() {
             return Err(MhlError::Invalid(format!(
                 "{} has no {CHAIN_FILE}; the history cannot be trusted",
@@ -372,11 +383,17 @@ pub struct Creator {
 }
 
 /// `<processinfo>` settings of a new generation.
+/// Hook run with a generation's file name just before it is written.
+pub type BeforeWrite<'a> = dyn Fn(&str) -> std::io::Result<()> + 'a;
+
 pub struct Process<'a> {
     /// `in-place`, `transfer` or `flatten`.
     pub kind: &'a str,
     /// Ignore patterns added to the history's (e.g. a sibling MHL v1.1 file written alongside).
     pub extra_ignore: &'a [String],
+    /// Called with the generation's file name before anything is written (to journal the
+    /// write); an error aborts the generation.
+    pub before_write: Option<&'a BeforeWrite<'a>>,
 }
 
 /// A file whose hash no longer matches what the history recorded for it.
@@ -654,6 +671,9 @@ pub fn write_generation(
     let _ = writeln!(out, "</hashlist>");
 
     let dir = root.join(FOLDER);
+    if let Some(hook) = process.before_write {
+        hook(&file_name).map_err(|e| MhlError::io(&dir.join(&file_name), e))?;
+    }
     std::fs::create_dir_all(&dir).map_err(|e| MhlError::io(&dir, e))?;
     let path = dir.join(&file_name);
     write_new(&path, out.as_bytes())?;
@@ -790,6 +810,26 @@ pub fn iso_local(t: Timestamp) -> String {
     t.to_zoned(TimeZone::system())
         .strftime("%Y-%m-%dT%H:%M:%S%:z")
         .to_string()
+}
+
+/// Settles a generation write that a previous run started (`file` in the history folder of
+/// `root`): `Ok(true)` if it was completed (the chain lists it), `Ok(false)` if it was cut
+/// short, in which case the orphaned file is removed so the history is consistent again.
+pub fn settle_interrupted(root: &Path, file: &str) -> Result<bool, MhlError> {
+    let dir = root.join(FOLDER);
+    let path = dir.join(file);
+    let chain_path = dir.join(CHAIN_FILE);
+    if chain_path.is_file() && parse_chain(&chain_path)?.iter().any(|c| c.file == file) {
+        return Ok(path.is_file());
+    }
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(MhlError::io(&path, e)),
+    }
+    let _ = std::fs::remove_file(path.with_extension("mhl.tmp"));
+    let _ = std::fs::remove_file(chain_path.with_extension("tmp"));
+    Ok(false)
 }
 
 /// Creates `path` (must not exist) durably.

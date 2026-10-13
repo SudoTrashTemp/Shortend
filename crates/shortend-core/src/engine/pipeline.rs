@@ -355,6 +355,8 @@ pub(crate) fn execute(
                             .lock()
                             .unwrap_or_else(|p| p.into_inner())
                             .clone();
+                        // Cosmetic and lossy: never waits for a slow front end.
+                        ctx.try_emit(Event::FileStarted(outcome.entry.rel.clone()));
                         process_file(&ctx, idx, &mut outcome, &pool);
                         let finished = !outcome
                             .dests

@@ -663,3 +663,108 @@ fn resume_keeps_the_extended_chain_and_writes_one_generation() {
     assert_history_valid(&target);
     assert_reference_verifies(&target);
 }
+
+/// Simulates a crash during manifest writing: the job's journal is cut right after the ASC
+/// MHL write intent (as if the process died there), and `damage` puts the destination in the
+/// state that moment would have left.
+fn crash_during_manifest(
+    versions: Vec<MhlVersion>,
+    damage: impl FnOnce(&Path),
+) -> (shortend_core::JobReport, PathBuf, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let card = tmp.path().join("A001");
+    make_card(&card);
+    std::fs::remove_file(card.join("empty.bin")).unwrap(); // MHL v1.1 can't list it
+    let dest = tmp.path().join("out");
+    std::fs::create_dir(&dest).unwrap();
+    let rep = offload(&card, &dest, vec![HashAlgorithm::Xxh64], versions);
+    assert_eq!(rep.state, JobState::Completed, "{:?}", rep.manifest_issues);
+    let target = dest.join("A001");
+
+    let journal = shortend_core::engine::state::jobs_root()
+        .join(rep.job.id.to_string())
+        .join(shortend_core::engine::state::JOURNAL_FILE);
+    let text = std::fs::read_to_string(&journal).unwrap();
+    let cut = text
+        .find("\"t\":\"mhl_intent\"")
+        .expect("an ASC MHL write intent was journaled");
+    let end = text[cut..].find('\n').unwrap() + cut + 1;
+    std::fs::write(&journal, &text[..end]).unwrap();
+    damage(&target);
+
+    let (r, _) = resume(&rep.job.id.to_string());
+    let r = r.unwrap();
+    (r, target, tmp)
+}
+
+/// Killed after the first generation file was in place but before the chain file existed:
+/// resume removes the orphan (its own, named in the journal) and writes the generation again.
+#[test]
+fn crash_before_the_chain_is_written_is_repaired_on_resume() {
+    let (r, target, _tmp) = crash_during_manifest(vec![MhlVersion::V2], |t| {
+        std::fs::remove_file(t.join("ascmhl/ascmhl_chain.xml")).unwrap();
+    });
+    assert_eq!(r.state, JobState::Completed, "{:?}", r.manifest_issues);
+    assert_eq!(
+        generations(&target).len(),
+        1,
+        "orphan replaced, not added to"
+    );
+    assert_history_valid(&target);
+    assert!(mhl::verify_folder(&target).unwrap()[0].ok());
+    assert_reference_verifies(&target);
+}
+
+/// Killed before the generation file was renamed into place: only its temporary file exists.
+#[test]
+fn crash_before_the_generation_lands_is_repaired_on_resume() {
+    let (r, target, _tmp) = crash_during_manifest(vec![MhlVersion::V2], |t| {
+        let generation = generations(t).remove(0);
+        std::fs::rename(&generation, generation.with_extension("mhl.tmp")).unwrap();
+        std::fs::remove_file(t.join("ascmhl/ascmhl_chain.xml")).unwrap();
+    });
+    assert_eq!(r.state, JobState::Completed, "{:?}", r.manifest_issues);
+    assert_eq!(generations(&target).len(), 1);
+    assert!(
+        std::fs::read_dir(target.join("ascmhl"))
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")),
+        "temporary files tidied up"
+    );
+    assert_history_valid(&target);
+    assert_reference_verifies(&target);
+}
+
+/// Killed after the chain was extended but before the journal recorded it: the generation is
+/// complete, so resume keeps it and writes no second one.
+#[test]
+fn crash_after_the_chain_is_written_keeps_the_generation() {
+    let (r, target, _tmp) = crash_during_manifest(vec![MhlVersion::V2], |_| {});
+    assert_eq!(r.state, JobState::Completed, "{:?}", r.manifest_issues);
+    assert_eq!(generations(&target).len(), 1);
+    assert_history_valid(&target);
+    assert_reference_verifies(&target);
+}
+
+/// Both manifests, killed after MHL v1.1 was written and before ASC MHL v2 existed: resume
+/// writes the v2 generation (the earlier code skipped it once any manifest was recorded) and
+/// replaces its own v1.1 file rather than adding a second.
+#[test]
+fn crash_between_the_two_manifests_writes_the_missing_one() {
+    let (r, target, _tmp) = crash_during_manifest(vec![MhlVersion::V2, MhlVersion::V1_1], |t| {
+        std::fs::remove_dir_all(t.join("ascmhl")).unwrap();
+    });
+    assert_eq!(r.state, JobState::Completed, "{:?}", r.manifest_issues);
+    assert_eq!(generations(&target).len(), 1);
+    let v11: Vec<_> = std::fs::read_dir(&target)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "mhl"))
+        .collect();
+    assert_eq!(v11.len(), 1, "one MHL v1.1 file");
+    assert_schema_valid(&v11[0].path(), "MediaHashList_v1_1.xsd");
+    assert_history_valid(&target);
+    assert!(mhl::verify_folder(&target).unwrap().iter().all(|v| v.ok()));
+    assert_reference_verifies(&target);
+}

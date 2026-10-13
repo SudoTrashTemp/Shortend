@@ -36,6 +36,12 @@ jobs:
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
+      - name: Engine has no GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          if cargo tree -p shortend-core -e normal,build --prefix none | grep -Ei '^(egui|eframe|winit|rfd|glutin|glow|wgpu|accesskit)'; then
+            echo "::error::shortend-core depends on a GUI crate"; exit 1
+          fi
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
@@ -48,10 +54,28 @@ jobs:
         shell: bash
         run: |
           [ -f test-output.txt ] || exit 0
-          grep -E -A4 "panicked at|^---- |FAILED|error\[" test-output.txt \
-            | head -60 | while IFS= read -r line; do echo "::error title=test failure::${line//%/%25}"; done
+          # One annotation per panic with its whole message (assertion text often carries a
+          # command's stdout/stderr), then the list of failed tests.
+          awk '{gsub(/%/,"%25")} /panicked at/{b=$0; next} /^note: run with|^stack backtrace:/{if(b!="")print b; b=""; next} b!=""{b=b "%0A" $0}' test-output.txt \
+            | head -c 60000 | while IFS= read -r block; do echo "::error title=test failure::${block:0:8000}"; done
+          grep -E "FAILED|error\[" test-output.txt | head -20 \
+            | while IFS= read -r line; do echo "::error title=test failure::${line//%/%25}"; done
       - name: Build (release)
         run: cargo build --workspace --release
+      # The real window (eframe + OpenGL via Mesa) opens and keeps running on X11 and Wayland.
+      # The UI itself is tested headlessly on every OS by tests/gui.rs (egui_kittest).
+      - name: GUI smoke test (X11, Wayland)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -q xvfb weston libgl1-mesa-dri > /dev/null
+          export SHORTEND_STATE_DIR="$RUNNER_TEMP/gui-state"
+          set +e
+          xvfb-run -a timeout 10 ./target/release/shortend-gui; x11=$?
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          weston --backend=headless --renderer=gl --socket=wl-ci > weston.log 2>&1 & sleep 3
+          env -u DISPLAY WAYLAND_DISPLAY=wl-ci timeout 10 ./target/release/shortend-gui; wl=$?
+          echo "X11 exit $x11, Wayland exit $wl (124 = still running after 10 s)"
+          [ "$x11" = 124 ] && [ "$wl" = 124 ]
 
   # Linux is the primary QA platform: real filesystems on loop devices, simulated hot-unplug
   # (device-mapper error target, lazy unmount), full disks, read-only remounts, permissions.

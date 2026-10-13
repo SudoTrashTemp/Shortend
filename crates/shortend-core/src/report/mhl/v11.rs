@@ -61,12 +61,24 @@ fn utc(t: Timestamp) -> String {
         .to_string()
 }
 
-/// Writes `<root>/<folder>_<YYYY-MM-DD_HHMMSS>.mhl`. Paths are relative to `root`.
+/// The manifest's file name for the folder `root`: `<folder>_<YYYY-MM-DD_HHMMSS>.mhl`.
+pub fn file_name(root: &Path, stamp: Timestamp) -> String {
+    let folder = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "root".into());
+    format!(
+        "{folder}_{}.mhl",
+        stamp.to_zoned(TimeZone::UTC).strftime("%Y-%m-%d_%H%M%S")
+    )
+}
+
+/// Writes (or atomically replaces) `<root>/<file_name>`. Paths are relative to `root`.
 pub fn write(
     root: &Path,
     entries: &[Entry<'_>],
     creator: &Creator<'_>,
-    now: Timestamp,
+    file_name: &str,
 ) -> Result<Written, MhlError> {
     let mut out =
         String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<hashlist version=\"1.1\">\n");
@@ -124,15 +136,8 @@ pub fn write(
     }
     out.push_str("</hashlist>\n");
 
-    let folder = root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "root".into());
-    let path = root.join(format!(
-        "{folder}_{}.mhl",
-        now.to_zoned(TimeZone::UTC).strftime("%Y-%m-%d_%H%M%S")
-    ));
-    super::v2::write_new(&path, out.as_bytes())?;
+    let path = root.join(file_name);
+    super::v2::replace_file(&path, out.as_bytes())?;
     Ok(Written {
         path,
         skipped_empty,

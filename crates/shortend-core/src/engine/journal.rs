@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::fs::RelPath;
 use crate::hash::Digests;
 use crate::model::{DestId, Failure, JobState};
+use crate::report::mhl::MhlVersion;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
@@ -40,10 +41,20 @@ pub enum Record {
         dest: DestId,
         failure: Failure,
     },
-    /// A manifest generation was written to `dest` (ASC MHL: the history's chain file was
-    /// extended, so it legitimately differs from the card's copy).
+    /// About to write manifest `file` to `dest` (synced first). An intent without a matching
+    /// [`Record::Mhl`] means the run stopped mid-write; resume tidies up exactly that file.
+    MhlIntent {
+        dest: DestId,
+        version: MhlVersion,
+        file: String,
+    },
+    /// A manifest was written to `dest` (ASC MHL: the history's chain file was extended, so it
+    /// legitimately differs from the card's copy). `version` is absent in journals from before
+    /// several manifests per job, which wrote ASC MHL v2.
     Mhl {
         dest: DestId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<MhlVersion>,
         file: String,
     },
     End {
@@ -89,8 +100,13 @@ impl Journal {
 #[derive(Debug, Default, Clone)]
 pub struct Replay {
     pub src: HashMap<RelPath, Digests>,
-    /// Destinations that already received a manifest from this job.
+    /// Destinations that already received a manifest from this job, or were being written
+    /// one when the run stopped (their chain file may legitimately differ from the card's).
     pub mhl: HashSet<DestId>,
+    /// Manifest versions completely written per destination.
+    pub mhl_done: HashSet<(DestId, MhlVersion)>,
+    /// Manifest writes that started but were never recorded as finished: (dest, version, file).
+    pub mhl_pending: Vec<(DestId, MhlVersion, String)>,
     pub commits: HashMap<(RelPath, DestId), Digests>,
     pub last_state: Option<JobState>,
 }
@@ -116,8 +132,24 @@ pub fn replay(path: &Path) -> std::io::Result<Replay> {
                 out.commits.insert((rel, dest), digests);
             }
             Record::DestFailed { .. } => {}
-            Record::Mhl { dest, .. } => {
+            Record::MhlIntent {
+                dest,
+                version,
+                file,
+            } => {
                 out.mhl.insert(dest);
+                out.mhl_pending.push((dest, version, file));
+            }
+            Record::Mhl {
+                dest,
+                version,
+                file,
+            } => {
+                let version = version.unwrap_or(MhlVersion::V2);
+                out.mhl.insert(dest);
+                out.mhl_done.insert((dest, version));
+                out.mhl_pending
+                    .retain(|(d, v, f)| !(*d == dest && *v == version && *f == file));
             }
             Record::End { state, .. } => out.last_state = Some(state),
         }
