@@ -6,7 +6,9 @@ drive, and only then marks it done. Each destination gets an ASC MHL manifest pl
 PDF reports.
 
 The engine is a Rust library (`shortend-core`). The `shortend` command line tool exposes all
-of it; a GUI comes later (see [PLAN.md](PLAN.md)).
+of it, and `shortend-gui` is a desktop app over the same engine: an Offload form (with presets
+and an inline preflight check), live progress per destination, job history with resume, and a
+preset editor. See [PLAN.md](PLAN.md) for the design.
 
 ## Quick start
 
@@ -15,6 +17,7 @@ cargo build --release
 ./target/release/shortend copy -s /media/CARD_A001 \
     -d RAID=/mnt/raid/Day01 -d SHUTTLE=/media/shuttle/Day01 \
     --show "Big Show" --day 01 --camroll A001 --operator "Jane Doe"
+./target/release/shortend-gui      # the desktop app
 ```
 
 - `shortend copy -s /media/CARD --preset bigshow --day 07 --camroll A001` uses a saved preset
@@ -104,9 +107,9 @@ mounted writable through the experimental `linux-apfs-rw` driver, ShortEnd warns
 - **Timestamps.** Modification times are preserved to the destination filesystem's
   precision: whole seconds on HFS+, 2 seconds on FAT32, 10 ms on exFAT, 100 ns on NTFS. This
   matters only for resume, which uses these times when matching files.
-- **Resume on macOS** recognises a destination drive by its device number, which can change
-  after the drive is reconnected. Linux and Windows match the volume's UUID or serial number.
-  Fixing macOS is a blocker for the GUI milestone (PLAN.md, M4).
+- **Resume** recognises a drive by its volume UUID (or serial number on Windows), so a
+  reconnected drive is found again. Network shares have none and are matched by device number.
+- **GUI file dialogs on Linux** need an XDG desktop portal; without one, type the path.
 - **MHL v1.1 can't list zero-byte files**, because its schema requires a size of at least 1.
   If v1.1 is written alongside ASC MHL v2, the empty files appear only in the v2 manifest.
   The job then ends with exit code 1, and the summary and the CSV, TXT and PDF reports name

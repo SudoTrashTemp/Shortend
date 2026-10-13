@@ -1,6 +1,6 @@
 # ShortEnd — Design Plan
 
-Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1–M3 implemented (see §9 checklists)
+Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1–M4 implemented (see §9 checklists)
 
 ShortEnd is a Linux-first, verified media offloader for DIT work: one source (a camera card or
 folder) copied to N destinations, every copy verified by read-back against a single in-stream
@@ -714,8 +714,8 @@ Done when:
 - An EIO/ENODEV/ENXIO on the source stops the job (`Aborted`, resumable) rather than failing
   file by file.
 - On resume, volumes are matched by filesystem UUID where known (a reconnected drive often
-  gets a new device number) and the recorded device number is refreshed. macOS has no UUID
-  yet (device number only) — **M4 blocker**, see M4.
+  gets a new device number) and the recorded device number is refreshed. macOS matches by
+  volume UUID too since M4.
 - Resume re-verifies every file already at its final path (added after M1 review: a file
   corrupted after verification with size and mtime intact must be caught —
   `resume_catches_corruption_after_verification`).
@@ -856,19 +856,44 @@ state dir, open reports, Resume), **Presets** (edit/save). The engine runs on a 
 the GUI only consumes `Event`s and calls the public API — no GUI types or crates in
 `shortend-core`.
 
-**Blocker carried from M1 — must be fixed before M4 starts:** on macOS, volumes are identified
-by device number only (`fs_uuid` is `None`), so a drive that is unplugged and reconnected under
-a new device number is refused on resume. Read the APFS/HFS+/exFAT volume UUID (via
-`getattrlist(ATTR_VOL_UUID)` or `statfs.f_fsid` + DiskArbitration) and match on it as Linux
-does.
+**Blocker carried from M1 (fixed):** on macOS, volumes were identified by device number only,
+so a drive that was unplugged and reconnected under a new device number was refused on resume.
+macOS now reads the volume UUID (`diskutil info -plist`, which needs no FFI; APFS, HFS+ and a
+serial-derived UUID for exFAT/FAT) and matches on it as Linux does.
 
 Done when:
-- [ ] macOS volume UUID implemented and covered by a test (blocker above).
-- [ ] `shortend-core` has no dependency on any GUI crate (checked in CI with `cargo tree`).
-- [ ] A full offload, cancel, and resume can be done from the GUI on Linux (X11 and Wayland),
-      macOS and Windows (manual checklist recorded in `docs/qa.md`).
-- [ ] UI stays responsive (≥30 fps) during a 10k-file job and while a destination is stalled.
-- [ ] Idle GUI with no job: <1% CPU, no continuous repaint.
+- [x] macOS volume UUID implemented and covered by a test (blocker above).
+      *`tests/macos_volumes.rs`: `hdiutil` images formatted exFAT, HFS+ and APFS; a re-attached
+      image under a new device number resumes, a different image with the same name at the
+      same mount point is refused.*
+- [x] `shortend-core` has no dependency on any GUI crate (checked in CI with `cargo tree`).
+- [x] A full offload, cancel, and resume can be done from the GUI on Linux (X11 and Wayland),
+      macOS and Windows (manual checklist recorded in `docs/qa.md`). *Automated on all three
+      OSes by `shortend-gui/tests/gui.rs` (egui_kittest drives the real widgets: Check →
+      Start → Cancel → History → Resume → PASS, files identical); the real window is
+      smoke-tested in CI on X11 (Xvfb) and Wayland (headless weston). The manual checklist
+      (native dialogs, drag and drop, real drive pulls, HiDPI) is run per release.*
+- [x] UI stays responsive (≥30 fps) during a 10k-file job and while a destination is stalled.
+      *`tests/responsive.rs`: p95 frame < 33 ms and no frame > 200 ms through a 10,000-file
+      job with one destination hung until the watchdog drops it (measured 3.5 ms p95).*
+- [x] Idle GUI with no job: <1% CPU, no continuous repaint. *The test checks the UI settles in
+      ≤3 frames with no repaint pending; the release build used 0 CPU ticks in 10 s.*
+
+**M4 implementation notes:**
+- `shortend-gui` (eframe 0.33, glow; rfd for native dialogs) is a library plus a thin binary,
+  so the tests drive the same `ShortEndApp`. The Offload form maps to and from a `Preset`, so
+  the GUI reuses M3's validation and the CLI's override rules.
+- The plan shown by Check is invalidated whenever the form differs from the form that was
+  checked; Start always runs the job that was shown.
+- New engine event `FileStarted` (sent with `try_send`, may be dropped) for the "current
+  files" list; it never slows the copy.
+- Closing the window during a copy asks first; "Cancel job and quit" leaves it resumable.
+- Found by the kill/resume test on Windows and fixed: a run killed while writing an ASC MHL
+  generation could leave a generation the chain doesn't list, which the resumed job then
+  refused. Manifest writes are journaled first; resume keeps a generation whose chain entry
+  landed and removes an orphan otherwise (`tests/mhl.rs`, four crash points).
+- Known gaps: without an XDG desktop portal, Browse… does nothing (type the path); egui's
+  fonts lack CJK glyphs (names are exact in reports and manifests).
 
 ### M5 — Format awareness + thumbnails
 

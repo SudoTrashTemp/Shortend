@@ -463,7 +463,7 @@ fn execute(
                 ));
             }
             Event::Warning(w) => progress.line(&format!("warning: {w}")),
-            Event::ReportWritten(_) => {}
+            Event::ReportWritten(_) | Event::FileStarted(_) => {}
         }
     }
     progress.clear();

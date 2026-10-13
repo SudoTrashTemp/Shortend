@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/shortend-core", "crates/shortend-cli"]
+members = ["crates/shortend-core", "crates/shortend-cli", "crates/shortend-gui"]
 
 [workspace.package]
 version = "0.1.0"
