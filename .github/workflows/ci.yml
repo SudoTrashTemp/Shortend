@@ -67,15 +67,26 @@ jobs:
       - name: GUI smoke test (X11, Wayland)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y -q xvfb weston libgl1-mesa-dri > /dev/null
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y -q xvfb weston libgl1-mesa-dri libegl1 > /dev/null
           export SHORTEND_STATE_DIR="$RUNNER_TEMP/gui-state"
+          # Each failure becomes an annotation with the log tail (the full logs aren't always
+          # readable where failures are triaged).
+          report() { # name exit-code log...
+            echo "$1 exit $2 (124 = still running after 10 s, as expected)"
+            [ "$2" = 124 ] && return 0
+            msg="$1: exit $2"
+            for f in "${@:3}"; do msg="$msg%0A--- $f%0A$(tail -n 25 "$f" | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"; done
+            echo "::error title=GUI smoke test::$msg"; return 1
+          }
           set +e
-          xvfb-run -a timeout 10 ./target/release/shortend-gui; x11=$?
+          xvfb-run -a timeout 10 ./target/release/shortend-gui > x11.log 2>&1
+          report X11 $? x11.log; ok_x11=$?
           export XDG_RUNTIME_DIR="$(mktemp -d)"
           weston --backend=headless --renderer=gl --socket=wl-ci > weston.log 2>&1 & sleep 3
-          env -u DISPLAY WAYLAND_DISPLAY=wl-ci timeout 10 ./target/release/shortend-gui; wl=$?
-          echo "X11 exit $x11, Wayland exit $wl (124 = still running after 10 s)"
-          [ "$x11" = 124 ] && [ "$wl" = 124 ]
+          env -u DISPLAY WAYLAND_DISPLAY=wl-ci timeout 10 ./target/release/shortend-gui > wl.log 2>&1
+          report Wayland $? wl.log weston.log; ok_wl=$?
+          [ "$ok_x11" = 0 ] && [ "$ok_wl" = 0 ]
 
   # Linux is the primary QA platform: real filesystems on loop devices, simulated hot-unplug
   # (device-mapper error target, lazy unmount), full disks, read-only remounts, permissions.
