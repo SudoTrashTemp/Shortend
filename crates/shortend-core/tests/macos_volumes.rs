@@ -61,8 +61,18 @@ fn attach_unmounted(img: &Path) -> String {
     out.split_whitespace().next().unwrap().to_owned() // /dev/diskN
 }
 
+/// macOS services (Spotlight, fseventsd) briefly hold a freshly used image, so "Resource busy"
+/// is retried for a while.
 fn detach(what: &str) {
-    hdiutil(&["detach", "-force", what]).unwrap();
+    let mut last = String::new();
+    for _ in 0..20 {
+        match hdiutil(&["detach", "-force", what]) {
+            Ok(_) => return,
+            Err(e) => last = e,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    panic!("{last}");
 }
 
 #[test]
