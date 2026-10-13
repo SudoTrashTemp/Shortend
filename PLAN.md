@@ -893,7 +893,8 @@ Done when:
   refused. Manifest writes are journaled first; resume keeps a generation whose chain entry
   landed and removes an orphan otherwise (`tests/mhl.rs`, four crash points).
 - Known gaps: without an XDG desktop portal, Browse… does nothing (type the path); egui's
-  fonts lack CJK glyphs (names are exact in reports and manifests).
+  fonts lack CJK glyphs (names are exact in reports and manifests); on X11 the window needs
+  `libxkbcommon-x11` (present on desktop installs; packaging in M6 must depend on it).
 
 ### M5 — Format awareness + thumbnails
 
@@ -917,7 +918,10 @@ USB HDD, and NAS; release workflow; packaging:
 - **Linux:** static **CLI** tarball (`x86_64` and `aarch64-unknown-linux-musl`) and an
   **AppImage** containing CLI + GUI built on an older glibc base (Ubuntu 22.04) for broad
   compatibility. A fully static GUI is not possible: egui/winit `dlopen` libGL/Wayland/X11,
-  which musl static binaries cannot do. ffmpeg is not bundled (size/licensing); it is used if
+  which musl static binaries cannot do. Runtime libraries the GUI loads on demand must be
+  bundled or declared: libGL/libEGL (Mesa), libxkbcommon and libxkbcommon-x11 (X11; without
+  it the window panics at startup — found by the M4 CI smoke test), libwayland-client.
+  ffmpeg is not bundled (size/licensing); it is used if
   found on `PATH` or configured.
 - **macOS:** universal `.dmg` (app bundle + CLI). Signing/notarization needs an Apple
   Developer account — wired up but conditional on secrets.

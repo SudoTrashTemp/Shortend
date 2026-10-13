@@ -109,7 +109,9 @@ mounted writable through the experimental `linux-apfs-rw` driver, ShortEnd warns
   matters only for resume, which uses these times when matching files.
 - **Resume** recognises a drive by its volume UUID (or serial number on Windows), so a
   reconnected drive is found again. Network shares have none and are matched by device number.
-- **GUI file dialogs on Linux** need an XDG desktop portal; without one, type the path.
+- **GUI on Linux** needs OpenGL (Mesa), `libxkbcommon` and, on X11, `libxkbcommon-x11`
+  (Debian/Ubuntu: `libgl1 libegl1 libxkbcommon-x11-0`); desktop installs have them. File
+  dialogs need an XDG desktop portal; without one, type the path.
 - **MHL v1.1 can't list zero-byte files**, because its schema requires a size of at least 1.
   If v1.1 is written alongside ASC MHL v2, the empty files appear only in the v2 manifest.
   The job then ends with exit code 1, and the summary and the CSV, TXT and PDF reports name

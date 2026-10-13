@@ -68,7 +68,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q > /dev/null
-          sudo apt-get install -y -q xvfb weston libgl1-mesa-dri libegl1 > /dev/null
+          sudo apt-get install -y -q xvfb weston libgl1-mesa-dri libegl1 libxkbcommon-x11-0 > /dev/null
           export SHORTEND_STATE_DIR="$RUNNER_TEMP/gui-state"
           # Each failure becomes an annotation with the log tail (the full logs aren't always
           # readable where failures are triaged).
