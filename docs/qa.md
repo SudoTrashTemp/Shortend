@@ -44,3 +44,12 @@ Known gaps:
   (some minimal window managers), Browse… does nothing; type or paste the path instead.
 - egui's built-in fonts have no CJK glyphs. Such file names show as boxes in the window, but
   are exact in the reports and manifests.
+
+Known CI flakes (tracked, not yet fixed):
+- `linux-devices` "Device tests (root)" has intermittently exited 101 while every named device
+  result printed "passed" (seen on PR #2, 2026-10-25; the identical commit passed the job in the
+  parallel run, and a re-run went green). Signature points at a loop/unmount teardown race in the
+  privileged harness, not product code. Fix candidate: retry/backoff around loop-device detach and
+  unmount in `crates/shortend-cli/tests/linux_devices.rs` (mirroring the existing macOS
+  `hdiutil detach` retry). Deferred because it can't be validated outside a privileged runner;
+  re-run the job on a one-off failure.
