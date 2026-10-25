@@ -1,6 +1,6 @@
 # ShortEnd — Design Plan
 
-Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1–M4 implemented (see §9 checklists)
+Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1–M4 implemented (see §9 checklists) · current build order: [docs/work-order.md](docs/work-order.md)
 
 ShortEnd is a Linux-first, verified media offloader for DIT work: one source (a camera card or
 folder) copied to N destinations, every copy verified by read-back against a single in-stream
