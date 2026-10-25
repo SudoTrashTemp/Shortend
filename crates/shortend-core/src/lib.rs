@@ -10,6 +10,7 @@ pub mod engine;
 mod error;
 pub mod fs;
 pub mod hash;
+pub mod media;
 pub mod model;
 pub mod naming;
 pub mod preset;

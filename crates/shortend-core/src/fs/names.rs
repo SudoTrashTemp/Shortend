@@ -52,6 +52,14 @@ pub fn component_problem(name: &str, fs: &FsType) -> Option<String> {
 
 /// Pairs of paths that would map to the same entry on a filesystem that ignores case and/or
 /// Unicode normalization (HFS+, APFS: "é" precomposed and "e" + combining accent are one name).
+/// Normalizes a name the way collision detection keys do — Unicode-composed and case-folded — so
+/// clip grouping (and anything else that compares stems) agrees with `case_collisions` on the
+/// filesystems where grouping bugs actually live (case- and normalization-insensitive volumes).
+pub fn fold(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    name.nfc().collect::<String>().to_lowercase()
+}
+
 pub fn case_collisions<'a>(
     paths: impl IntoIterator<Item = &'a RelPath>,
     ignore_case: bool,

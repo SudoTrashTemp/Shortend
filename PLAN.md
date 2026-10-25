@@ -1,6 +1,6 @@
-# ShortEnd — Design Plan
+# ShortEnd â Design Plan
 
-Status: **APPROVED** (2026-10-10, with the decisions in §11) · M1–M4 implemented (see §9 checklists) · current build order: [docs/work-order.md](docs/work-order.md)
+Status: **APPROVED** (2026-10-10, with the decisions in Â§11) Â· M1âM4 implemented (see Â§9 checklists) Â· current build order: [docs/work-order.md](docs/work-order.md)
 
 ShortEnd is a Linux-first, verified media offloader for DIT work: one source (a camera card or
 folder) copied to N destinations, every copy verified by read-back against a single in-stream
@@ -16,9 +16,9 @@ driven by a CLI; the GUI is a thin egui shell over the same library.
 | Concurrency | Plain `std::thread` + bounded `std::sync::mpsc::sync_channel` | All work is blocking file I/O; an async runtime adds weight and buys nothing here. |
 | Async runtime | None | See above. |
 | Platform syscalls | `rustix` (Linux/macOS), `windows-sys` (Windows) | Safe, thin wrappers for `renameat2`, `fadvise`, `statvfs`, `O_NOATIME` etc. without hand-written `libc` unsafe. |
-| Checksums | `xxhash-rust`, `md-5`, `sha1`, `sha2` | `xxhash-rust` as requested; RustCrypto crates are the standard pure-Rust digests. C4 = SHA-512 + base58 (≈40 lines of our own code, no extra crate). |
+| Checksums | `xxhash-rust`, `md-5`, `sha1`, `sha2` | `xxhash-rust` as requested; RustCrypto crates are the standard pure-Rust digests. C4 = SHA-512 + base58 (â40 lines of our own code, no extra crate). |
 | XML (MHL) | `quick-xml` | Fast streaming writer/reader; manifests for 100k-file cards never need a DOM. |
-| PDF | `printpdf` | Pure Rust, embeds fonts and images, no system libraries — keeps the static/AppImage builds simple. We do our own (simple) table layout. |
+| PDF | `printpdf` | Pure Rust, embeds fonts and images, no system libraries â keeps the static/AppImage builds simple. We do our own (simple) table layout. |
 | Dates/times | `jiff` | Correct local time zones on Linux in multithreaded programs (the `time` crate refuses local offsets there); good formatting for `{date}` tokens. |
 | Presets / job specs | `serde` + `toml` | Human-readable, diff-able, shareable, as requested. |
 | Journal | `serde_json` (JSON Lines) | Append-only, one fsync'd record per line, trivially recoverable after a crash. |
@@ -42,38 +42,38 @@ Deliberately **not** included: async runtimes, plugin systems, a database, loggi
 
 ```
 shortend/
-├── Cargo.toml                    # workspace, shared lints (clippy::pedantic subset), edition 2024
-├── PLAN.md
-├── xsd/                          # vendored official schemas (MIT, with license file)
-│   ├── ascmhl.xsd                # ASC MHL v2 manifest
-│   ├── ascmhl-directory.xsd      # ASC MHL v2 chain file
-│   └── mediahashlist-v1.1.xsd    # MHL v1.1
-├── crates/
-│   ├── shortend-core/            # library: the entire engine; no GUI types, no printing to stdout
-│   │   ├── src/
-│   │   │   ├── lib.rs            # public API: plan(), run(), resume(), verify(), presets
-│   │   │   ├── model.rs          # Job, Source, Destination, FileEntry, outcomes (§3)
-│   │   │   ├── hash/             # mod.rs (Hasher enum, Digest), c4.rs
-│   │   │   ├── fs/
-│   │   │   │   ├── relpath.rs    # validated relative paths
-│   │   │   │   ├── scan.rs       # source walk, symlink/special-file refusal
-│   │   │   │   ├── names.rs      # cross-FS filename legality, case-collision checks
-│   │   │   │   └── platform/     # linux.rs, macos.rs, windows.rs (+ unix.rs shared)
-│   │   │   ├── engine/
-│   │   │   │   ├── preflight.rs  # validation, free space, volume identity
-│   │   │   │   ├── pipeline.rs   # reader → fan-out → writers → verifiers
-│   │   │   │   ├── stage.rs      # staging dir, atomic commit
-│   │   │   │   ├── journal.rs    # crash-safe resume log
-│   │   │   │   └── cancel.rs     # CancelToken
-│   │   │   ├── report/           # csv.rs, txt.rs, pdf.rs, mhl/{v2.rs, v11.rs, read.rs}
-│   │   │   ├── preset/           # mod.rs (TOML), template.rs (token naming)
-│   │   │   └── media/            # M5: detect.rs, ffmpeg.rs, clips.rs
-│   │   ├── assets/               # embedded font for PDFs (OFL-licensed)
-│   │   └── tests/                # integration tests (see §8)
-│   ├── shortend-cli/             # `shortend` binary: argument parsing + event rendering only
-│   └── shortend-gui/             # `shortend-gui` binary: egui over shortend-core
-├── packaging/                    # appimage/, macos/, windows/
-└── .github/workflows/            # ci.yml, release.yml
+âââ Cargo.toml                    # workspace, shared lints (clippy::pedantic subset), edition 2024
+âââ PLAN.md
+âââ xsd/                          # vendored official schemas (MIT, with license file)
+â   âââ ascmhl.xsd                # ASC MHL v2 manifest
+â   âââ ascmhl-directory.xsd      # ASC MHL v2 chain file
+â   âââ mediahashlist-v1.1.xsd    # MHL v1.1
+âââ crates/
+â   âââ shortend-core/            # library: the entire engine; no GUI types, no printing to stdout
+â   â   âââ src/
+â   â   â   âââ lib.rs            # public API: plan(), run(), resume(), verify(), presets
+â   â   â   âââ model.rs          # Job, Source, Destination, FileEntry, outcomes (Â§3)
+â   â   â   âââ hash/             # mod.rs (Hasher enum, Digest), c4.rs
+â   â   â   âââ fs/
+â   â   â   â   âââ relpath.rs    # validated relative paths
+â   â   â   â   âââ scan.rs       # source walk, symlink/special-file refusal
+â   â   â   â   âââ names.rs      # cross-FS filename legality, case-collision checks
+â   â   â   â   âââ platform/     # linux.rs, macos.rs, windows.rs (+ unix.rs shared)
+â   â   â   âââ engine/
+â   â   â   â   âââ preflight.rs  # validation, free space, volume identity
+â   â   â   â   âââ pipeline.rs   # reader â fan-out â writers â verifiers
+â   â   â   â   âââ stage.rs      # staging dir, atomic commit
+â   â   â   â   âââ journal.rs    # crash-safe resume log
+â   â   â   â   âââ cancel.rs     # CancelToken
+â   â   â   âââ report/           # csv.rs, txt.rs, pdf.rs, mhl/{v2.rs, v11.rs, read.rs}
+â   â   â   âââ preset/           # mod.rs (TOML), template.rs (token naming)
+â   â   â   âââ media/            # M5: detect.rs, ffmpeg.rs, clips.rs
+â   â   âââ assets/               # embedded font for PDFs (OFL-licensed)
+â   â   âââ tests/                # integration tests (see Â§8)
+â   âââ shortend-cli/             # `shortend` binary: argument parsing + event rendering only
+â   âââ shortend-gui/             # `shortend-gui` binary: egui over shortend-core
+âââ packaging/                    # appimage/, macos/, windows/
+âââ .github/workflows/            # ci.yml, release.yml
 ```
 
 Three crates instead of two: the CLI must exist without the GUI's dependency tree (the static
@@ -125,7 +125,7 @@ pub struct Digest {
 }
 impl Digest {
     pub fn to_hex(&self) -> String;    // lowercase
-    pub fn to_mhl(&self) -> String;    // hex, or "c4…" base58 ID for C4
+    pub fn to_mhl(&self) -> String;    // hex, or "c4â¦" base58 ID for C4
     pub fn parse(algo: HashAlgorithm, s: &str) -> Result<Self, HashParseError>;
 }
 
@@ -178,13 +178,13 @@ pub struct FileEntry {
 // ---------- job ----------
 pub struct Source {
     pub root: PathBuf,                 // canonical; must not be (or traverse) a symlink
-    pub label: String,                 // card name → {card}
+    pub label: String,                 // card name â {card}
     pub volume: VolumeInfo,
 }
 
 pub struct Destination {
     pub id: DestId,
-    pub label: String,                 // "RAID", "Shuttle A", …
+    pub label: String,                 // "RAID", "Shuttle A", â¦
     pub root: PathBuf,                 // must already exist; never a symlink
     pub target: PathBuf,               // root.join(expanded naming template)
     pub volume: VolumeInfo,            // captured at preflight, revalidated before each write batch
@@ -337,8 +337,8 @@ enum Token { Date { fmt: Option<String> }, Time, Show, Episode, Day, Card, Camro
 // `{camrol}` parses to Token::Camroll (silent alias, ShotPut Pro preset compatibility).
 ```
 
-Memory: file *data* never accumulates (bounded buffer pool, §4). Per-file *metadata* is held
-in RAM — about 200 B per file, i.e. ~20 MB for a 100k-frame CinemaDNG card — which is acceptable
+Memory: file *data* never accumulates (bounded buffer pool, Â§4). Per-file *metadata* is held
+in RAM â about 200 B per file, i.e. ~20 MB for a 100k-frame CinemaDNG card â which is acceptable
 and keeps reporting simple.
 
 ---
@@ -348,52 +348,52 @@ and keeps reporting simple.
 ### 4.1 Job lifecycle
 
 ```
-JobSpec ──plan()──▶ Job ──run()──▶ [preflight recheck] ──▶ pipeline ──▶ commit ──▶ reports ──▶ JobReport
-                     │                                      │
-                     └── job.toml + journal.jsonl ◀─────────┘   (state dir; drives resume())
+JobSpec ââplan()âââ¶ Job âârun()âââ¶ [preflight recheck] âââ¶ pipeline âââ¶ commit âââ¶ reports âââ¶ JobReport
+                     â                                      â
+                     âââ job.toml + journal.jsonl âââââââââââ   (state dir; drives resume())
 ```
 
-State dir: `$XDG_STATE_HOME/shortend/jobs/<job-id>/` (default `~/.local/state/…`) on Linux,
+State dir: `$XDG_STATE_HOME/shortend/jobs/<job-id>/` (default `~/.local/state/â¦`) on Linux,
 `~/Library/Application Support/ShortEnd/jobs/` on macOS, `%LOCALAPPDATA%\ShortEnd\jobs\` on
-Windows (resolved from env vars — three cases don't justify a crate).
+Windows (resolved from env vars â three cases don't justify a crate).
 
-### 4.2 Preflight (fail closed — refuse to start rather than discover problems mid-copy)
+### 4.2 Preflight (fail closed â refuse to start rather than discover problems mid-copy)
 
 1. Source root exists, is a directory, is not a symlink; no path component is a symlink.
 2. Walk source without following links. **Refuse** if any symlink, FIFO, socket or device node
    is found, or any name is not valid UTF-8; list all offenders. Hidden/system files
-   (`.DS_Store`, `._*`) are copied like everything else — the card is copied as-is.
+   (`.DS_Store`, `._*`) are copied like everything else â the card is copied as-is.
 3. Each destination root exists, is a directory, is not a symlink, is writable (probe file in
    the staging dir), and is not inside the source or another destination (and vice versa).
-4. Two destinations on the same volume → warning (allowed, but it halves throughput and is
+4. Two destinations on the same volume â warning (allowed, but it halves throughput and is
    rarely intentional).
 5. Expand the naming template; sanitize each token *value* for the strictest common filesystem
    (exFAT/NTFS illegal chars, trailing dots/spaces, reserved names like `CON`); a target folder
-   that already contains files → refuse unless this is a resume.
+   that already contains files â refuse unless this is a resume.
 6. Filename compatibility per destination: illegal names for that FS, over-long names
    (255 bytes on ext4, 255 UTF-16 units on exFAT/NTFS), and **case collisions** (`A.MOV` and
-   `a.mov`) when the destination probes as case-insensitive → refuse.
-7. Free space: `Σ size rounded up to block_size` + 1% margin ≤ free space on each destination.
-8. Hash/manifest compatibility: e.g. MHL v1.1 + XXH3 is unrepresentable → refuse with a clear
-   message (see §5.3).
+   `a.mov`) when the destination probes as case-insensitive â refuse.
+7. Free space: `Î£ size rounded up to block_size` + 1% margin â¤ free space on each destination.
+8. Hash/manifest compatibility: e.g. MHL v1.1 + XXH3 is unrepresentable â refuse with a clear
+   message (see Â§5.3).
 
 ### 4.3 Copy pipeline
 
 ```
-              ┌────────── bounded queue ──▶ writer[dest 0] ──▶ stage file ──▶ verifier[dest 0]
- reader ──▶ hash once ──▶ Arc<Chunk> ─┼────────── bounded queue ──▶ writer[dest 1] ──▶ stage file ──▶ verifier[dest 1]
- (source, O_NOATIME)          └────────── bounded queue ──▶ writer[dest N] ──▶ …
+              âââââââââââ bounded queue âââ¶ writer[dest 0] âââ¶ stage file âââ¶ verifier[dest 0]
+ reader âââ¶ hash once âââ¶ Arc<Chunk> ââ¼ââââââââââ bounded queue âââ¶ writer[dest 1] âââ¶ stage file âââ¶ verifier[dest 1]
+ (source, O_NOATIME)          âââââââââââ bounded queue âââ¶ writer[dest N] âââ¶ â¦
 ```
 
 - **One source read, hashed in-stream.** The reader reads `chunk_size` buffers from a fixed
   pool, feeds the hasher, and fans the same `Arc` buffer out to every destination writer. A
   buffer returns to the pool when the last writer drops it, so peak memory is
-  `parallel_files × pool_depth × chunk_size` (default 2 × 4 × 8 MiB = 64 MiB), independent of
-  file size. The slowest destination sets the pace — inherent to single-read fan-out.
+  `parallel_files Ã pool_depth Ã chunk_size` (default 2 Ã 4 Ã 8 MiB = 64 MiB), independent of
+  file size. The slowest destination sets the pace â inherent to single-read fan-out.
 - **Source integrity.** Source size and mtime are re-checked after the read; a change fails the
   file (`SourceChanged`). Optional `source_reread` re-reads the source with the cache dropped and
   compares hashes, catching flaky card readers.
-- **Writers** write to a staged file (§4.4), then `fsync` it. Writes are buffered (not
+- **Writers** write to a staged file (Â§4.4), then `fsync` it. Writes are buffered (not
   `O_DIRECT`, which breaks on exFAT and needs alignment everywhere), but on Linux we call
   `fadvise(DONTNEED)` behind the write head so a 300 GB clip doesn't flood the page cache and
   hide a dead drive until the final `fsync`.
@@ -417,10 +417,10 @@ Windows (resolved from env vars — three cases don't justify a crate).
 - `rename_noreplace`: Linux `renameat2(RENAME_NOREPLACE)`; macOS `renamex_np(RENAME_EXCL)`;
   Windows `MoveFileExW` without `REPLACE_EXISTING`. Some Linux filesystems (exFAT, FUSE
   ntfs-3g, some network FSs) return `EINVAL` for `RENAME_NOREPLACE`; fallback is
-  `symlink_metadata(target)` must be `NotFound` → plain `rename`. The remaining TOCTOU window
+  `symlink_metadata(target)` must be `NotFound` â plain `rename`. The remaining TOCTOU window
   is confined to a target folder this job created and is documented.
 - **Before each write batch** the destination is revalidated: root still exists, is not a
-  symlink, and `VolumeInfo.dev`/`fs_uuid` match preflight. Any mismatch → that destination is
+  symlink, and `VolumeInfo.dev`/`fs_uuid` match preflight. Any mismatch â that destination is
   marked `DestinationOffline` and stops; other destinations continue.
 - A failed verification leaves no file at the final path; the `.part` is deleted and the file
   is retried once (configurable count) before being reported as failed. The staging dir is
@@ -439,7 +439,7 @@ unchanged after every engine test that uses a source fixture.
 records is considered done:
 
 ```jsonl
-{"t":"start","job":"0190…","at":"2026-10-09T22:22:00Z"}
+{"t":"start","job":"0190â¦","at":"2026-10-09T22:22:00Z"}
 {"t":"src","rel":"A001C001.mxf","hash":"ef46db3751d8e999"}
 {"t":"commit","rel":"A001C001.mxf","dest":0,"hash":"ef46db3751d8e999"}
 {"t":"dest_failed","dest":1,"reason":"DestinationOffline"}
@@ -449,14 +449,14 @@ records is considered done:
 Resume (`shortend resume <job-id>`, also after `kill -9` or power loss):
 
 1. Reload `job.toml`; re-run preflight checks against the *same* volumes (fs UUID + device
-   identity). For the source, also confirm the file list, sizes and mtimes match the snapshot —
+   identity). For the source, also confirm the file list, sizes and mtimes match the snapshot â
    a different card with the same name is refused.
 2. A truncated final journal line is ignored.
 3. **Skip rule.** A file is not re-copied to a destination (`AlreadyVerified`) only when it is
    *re-verified now*: the final file exists, is re-read from the device and hashed, its
    checksums equal the journaled source checksums, its size and mtime match (mtime within the
    destination filesystem's granularity, 2 s for FAT), and the source still matches the scan
-   snapshot. A journal `commit` record alone is never trusted — the file may have been damaged
+   snapshot. A journal `commit` record alone is never trusted â the file may have been damaged
    after it was verified. Anything that fails re-verification, or has no journaled source
    checksum, is removed (it can only be ours: the target folder belongs to this job) and
    re-copied. Stale `.part` files are deleted. Cost: resume reads back every file already on
@@ -470,8 +470,8 @@ Resume (`shortend resume <job-id>`, also after `kill -9` or power loss):
 
 ### 4.7 Errors, unplug, cancellation
 
-- I/O errors are classified from `io::ErrorKind` + raw OS errno: `ENOSPC`→`DiskFull`,
-  `EACCES/EPERM/EROFS`→`PermissionDenied`, `EIO/ENODEV/ENXIO/ENOENT-on-root`→`DestinationOffline`
+- I/O errors are classified from `io::ErrorKind` + raw OS errno: `ENOSPC`â`DiskFull`,
+  `EACCES/EPERM/EROFS`â`PermissionDenied`, `EIO/ENODEV/ENXIO/ENOENT-on-root`â`DestinationOffline`
   or `SourceUnavailable`. A destination failure isolates that destination; a source failure
   stops the job (nothing more can be read) and leaves it resumable.
 - A read or write that blocks on a dead device is unavoidable in the kernel; threads are never
@@ -493,14 +493,14 @@ don't hash themselves. Nothing is ever written to the source.
 
 ### 5.2 CSV and TXT (M1)
 
-- CSV: one row per file × destination — `relative_path, size_bytes, modified, algorithm,
+- CSV: one row per file Ã destination â `relative_path, size_bytes, modified, algorithm,
   source_hash, destination, verified_hash, status, error`.
 - TXT: human-readable summary (job, production fields, source, destinations, totals, per-
   destination speed, PASS/FAIL), followed by the failure list and then the full file list.
 
 ### 5.3 ASC MHL (M2)
 
-**v2 (default)** — written per destination at the offload target folder:
+**v2 (default)** â written per destination at the offload target folder:
 `<target>/ascmhl/NNNN_<folder>_<YYYY-MM-DD_HHMMSS>Z.mhl` plus `ascmhl_chain.xml`, which records
 each generation's C4 hash (so C4 is implemented regardless of the user's chosen algorithm).
 Each generation contains creator/process info, the ignore list, every file with size and
@@ -508,14 +508,14 @@ last-modification date, and a hash element marked `original` (first sighting) or
 (when the source already carried an ASC MHL history, which is copied along with the card and
 extended with a new generation). Directory content/structure hashes follow the reference
 implementation's algorithm. Exact file naming and hash semantics are matched to the vendored
-spec and reference tool output at M2 — not reconstructed from memory.
+spec and reference tool output at M2 â not reconstructed from memory.
 
 Hash support: ASC MHL v2 supports MD5, SHA-1, C4, XXH64, XXH3 and XXH128. SHA-256 appears in
 newer reference-library documentation but not in older schema releases; M2 vendors the
-current official XSD and enables SHA-256 in MHL v2 only if that XSD defines it — otherwise
+current official XSD and enables SHA-256 in MHL v2 only if that XSD defines it â otherwise
 SHA-256 + MHL is refused at preflight (SHA-256 still works for CSV/TXT/PDF).
 
-**v1.1 (interop)** — single `<folder>_<date>.mhl` per target (`<hashlist version="1.1">`).
+**v1.1 (interop)** â single `<folder>_<date>.mhl` per target (`<hashlist version="1.1">`).
 v1.1 can only carry MD5, SHA-1 and xxHash64 (emitted as `xxhash64be`; both `xxhash64` and
 `xxhash64be` are read, with byte-order handling checked against MhlFileVerify/simple-mhl
 fixtures). XXH3/XXH128/SHA-256/C4 + v1.1 is refused at preflight.
@@ -578,7 +578,7 @@ operator = "Jane Doe"
 ```
 
 Tokens: `{date[:fmt]}` (default `%Y%m%d`), `{time[:fmt]}` (default `%H%M%S`), `{show}`,
-`{episode}`, `{day}`, `{card}`, `{camroll}`, `{seq[:width]}` (width 1–9); `{{`/`}}` are literal
+`{episode}`, `{day}`, `{card}`, `{camroll}`, `{seq[:width]}` (width 1â9); `{{`/`}}` are literal
 braces. `{camrol}` is accepted as a silent alias of `{camroll}` so ShotPut Pro-style presets
 load unchanged; saved presets always write `{camroll}`. Unknown tokens, unbalanced braces,
 bad widths/formats, `{seq}` more than once and a date format containing `/` are load-time
@@ -603,19 +603,27 @@ machine can't drift. Resume uses the stored folder and never claims a new number
   X-OCN/XAVC (`XDROOT`, `.mxf`), BRAW, ProRes/DNxHR (`.mov`/`.mxf` codec via ffprobe),
   CinemaDNG sequences, Canon `.crm`/`.cr3`, JPEG/HEIF/TIFF, WAV/BWF audio, sidecars
   (`.xml`, `.xmp`, `.ale`, `.cdl`, LUTs). Unknown files pass through untouched with no
-  metadata — detection never affects what gets copied.
+  metadata â detection never affects what gets copied.
 - **Clip grouping** (spanned R3D, frame sequences) so reports list clips, not 40,000 frames.
-- **Metadata:** `ffprobe -show_format -show_streams -of json` → codec, resolution, fps,
+- **Metadata:** `ffprobe -show_format -show_streams -of json` â codec, resolution, fps,
   timecode tag, duration.
 - **Thumbnails:** `ffmpeg -skip_frame nokey -ss <~1/3 duration> -i <clip> -frames:v 1
   -f image2pipe -c:v png -` (I-frame only), downscaled and JPEG-encoded with `image`.
   Generated from the **verified destination copy**, after the copy finishes, so the card can
   be ejected immediately and the source is never re-read for reporting.
 - **Degradation:** ffmpeg/ffprobe missing, failing, or timing out (per-call timeout; child is
-  killed) → no thumbnail/metadata for that clip, a single warning in the report, never a
+  killed) â no thumbnail/metadata for that clip, a single warning in the report, never a
   crash. ffmpeg cannot decode ARRIRAW, R3D, BRAW, X-OCN or HDE; those clips get a format
   label and filename-derived info instead of a thumbnail. Vendor SDK/CLI integration is out
   of scope.
+
+**M5 implementation notes** (in progress; slicing in [docs/m5-plan.md](docs/m5-plan.md)):
+- Slice ① (detection + clip grouping) landed: `media/detect.rs` (`MediaKind`, extension +
+  folder-signature classification) and `media/clip.rs` (grouping on the **source scan**, spanned
+  segments + numeric-suffix frame sequences collapse, gaps shown as separate ranges, sidecars attach
+  to a clip stem but never form a clip, unrecognized = one clip per file). Grouping reuses the
+  `names.rs` case/normalization fold. Pure, no byte reads. ffprobe/thumbnails/PDF are later slices.
+- M5 §9 boxes stay unchecked until every slice is in and CI proves each line.
 
 ---
 
@@ -625,11 +633,11 @@ All tests run with `cargo test` from M1 onward unless marked privileged.
 
 | Area | Tests |
 |---|---|
-| Checksums | Known vectors for every algorithm (e.g. XXH64("") = `ef46db3751d8e999`, XXH3-64("") = `2d06800538d394c2`, MD5("") = `d41d8cd98f00b204e9800998ecf8427e`, SHA-256("abc") = `ba7816bf…15ad`, C4 vectors from the C4 spec), plus streaming-equals-one-shot over random chunk boundaries, plus cross-checks against `xxhsum`/`sha256sum` output for generated files. |
+| Checksums | Known vectors for every algorithm (e.g. XXH64("") = `ef46db3751d8e999`, XXH3-64("") = `2d06800538d394c2`, MD5("") = `d41d8cd98f00b204e9800998ecf8427e`, SHA-256("abc") = `ba7816bfâ¦15ad`, C4 vectors from the C4 spec), plus streaming-equals-one-shot over random chunk boundaries, plus cross-checks against `xxhsum`/`sha256sum` output for generated files. |
 | Copy/verify | Small/empty/large (sparse-created multi-GB) files, deep trees, 10k tiny files, Unicode names, N=1..4 destinations, mtime preservation, injected corruption on one destination detected as `HashMismatch` while others pass. |
-| Source safety | Source tree checksum + mtimes + atimes identical before/after every fixture run; symlink/FIFO in source → preflight refusal; symlinked destination root → refusal. |
-| Resume | CLI subprocess killed with SIGKILL at random points (looped, seeded) → `resume` completes; no partial file at any final path; journal consistent; every committed file verifies. Truncated journal line tolerated. |
-| Cancellation | Cancel mid-file → no `.part` left, resumable, returns promptly. |
+| Source safety | Source tree checksum + mtimes + atimes identical before/after every fixture run; symlink/FIFO in source â preflight refusal; symlinked destination root â refusal. |
+| Resume | CLI subprocess killed with SIGKILL at random points (looped, seeded) â `resume` completes; no partial file at any final path; journal consistent; every committed file verifies. Truncated journal line tolerated. |
+| Cancellation | Cancel mid-file â no `.part` left, resumable, returns promptly. |
 | Naming | Template parse errors, every token, date formats, sanitization of illegal chars/reserved names, `{seq}` across destinations with pre-existing folders and concurrent creation. |
 | Presets | TOML round-trip, unknown keys rejected, `format_version` checks. |
 | MHL | `xmllint --schema` validation of every v2/v1.1 output; `ascmhl verify` on v2 output; reading reference-generated golden fixtures; refusal of unrepresentable algorithm/version combos. |
@@ -638,19 +646,19 @@ All tests run with `cargo test` from M1 onward unless marked privileged.
 **Linux privileged integration tests** (`tests/linux_devices.rs`, run when
 `SHORTEND_PRIVILEGED_TESTS=1`; a dedicated CI job with passwordless sudo):
 
-- Loop-device filesystems: ext4, exFAT (`exfatprogs`), NTFS (`ntfs3`), vfat — full offload +
+- Loop-device filesystems: ext4, exFAT (`exfatprogs`), NTFS (`ntfs3`), vfat â full offload +
   verify on each.
 - **Hot-unplug simulation:** destination on a device-mapper target; mid-copy the table is
-  swapped to `dm-error` (`dmsetup load … error && dmsetup resume`) → that destination fails as
+  swapped to `dm-error` (`dmsetup load â¦ error && dmsetup resume`) â that destination fails as
   `DestinationOffline`, the other destination completes and verifies, the job is resumable.
   Same for the source (`SourceUnavailable`, job stops, resumable after the device is restored
   with the same UUID). A second variant uses `umount -l` mid-copy.
 - **Disk full:** small loop filesystem that passes preflight but is filled by an outside writer
-  mid-job → `DiskFull`, no partial file at a final path.
+  mid-job â `DiskFull`, no partial file at a final path.
 - **Permissions:** read-only remount mid-job, `chmod 000` target subdir, root-owned dest root.
 - Where the runner kernel provides `scsi_debug`, a variant deletes the SCSI device via sysfs
   (`echo 1 > /sys/block/sdX/device/delete`), which is the closest software analogue to pulling
-  a USB/eSATA cable; otherwise it is run manually before releases (§9, M6 checklist), together
+  a USB/eSATA cable; otherwise it is run manually before releases (Â§9, M6 checklist), together
   with real USB, eSATA and NVMe pulls.
 
 ---
@@ -660,24 +668,24 @@ All tests run with `cargo test` from M1 onward unless marked privileged.
 Every milestone ends with: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo test --workspace`, and `cargo build --workspace --release` all passing on
 Linux, plus the milestone's own done criteria. CI (Linux/macOS/Windows build + test) is set
-up in M1 — M6 extends it rather than introducing it, since the requirement is tests on every
+up in M1 â M6 extends it rather than introducing it, since the requirement is tests on every
 commit.
 
-### M1 — CLI engine: copy + verify + CSV/TXT
+### M1 â CLI engine: copy + verify + CSV/TXT
 
 Scope: workspace skeleton; `hash` (all 7 algorithms incl. C4); `RelPath`, scan, preflight
-(§4.2 items 1–7); pipeline with fan-out, read-back verification, staging and atomic commit;
+(Â§4.2 items 1â7); pipeline with fan-out, read-back verification, staging and atomic commit;
 journal + `resume`; cancellation (Ctrl-C); Linux/macOS/Windows platform functions; CSV/TXT
 reports; CLI:
 
 ```
-shortend copy  --source <dir> --dest [LABEL=]<dir>… [--folder <name>] [--hash xxh64]
+shortend copy  --source <dir> --dest [LABEL=]<dir>â¦ [--folder <name>] [--hash xxh64]
                [--reread-source] [--parallel N] [--no-csv] [--no-txt]
 shortend resume <job-id>
 shortend jobs                       # list jobs and their state
 ```
 
-Exit codes: 0 all verified · 1 some files failed · 2 preflight refused / usage · 3 cancelled ·
+Exit codes: 0 all verified Â· 1 some files failed Â· 2 preflight refused / usage Â· 3 cancelled Â·
 4 internal error.
 
 Done when:
@@ -694,17 +702,17 @@ Done when:
       lazy unmount; disk full; read-only remount; unprivileged-user permissions; exFAT
       case-collision refusal.*
 - [x] Peak RSS for a single-file offload to 2 destinations stays under 100 MB. The test file
-      size defaults to 4 GB (≥ 40× the bound, so any whole-file buffering would show) and is
-      set by `SHORTEND_RSS_TEST_GB`; run with 20 on a machine with ≥ 60 GB free.
+      size defaults to 4 GB (â¥ 40Ã the bound, so any whole-file buffering would show) and is
+      set by `SHORTEND_RSS_TEST_GB`; run with 20 on a machine with â¥ 60 GB free.
       *Measured: 39 MB peak at 4 GB and at 10 GB.*
 - [x] CI green on Linux, macOS, Windows (privileged job on Linux). *github.com/SudoTrashTemp/Shortend,
-      two consecutive green runs on commit a61f57e (Ubuntu/macOS/Windows tests incl. 25× SIGKILL+resume,
+      two consecutive green runs on commit a61f57e (Ubuntu/macOS/Windows tests incl. 25Ã SIGKILL+resume,
       linux-devices, memory-bound 39 MB at 4 GB). Test results are posted as check annotations.*
 
 **M1 implementation notes** (deviations and decisions made while building):
 - Job state is `job.toml` (human-readable header) plus `snapshot.json` (the file list), so
   `shortend jobs` stays fast for 100k-file cards.
-- `Event::Progress` carries cumulative counters and is sampled 4×/s with `try_send`, so a slow
+- `Event::Progress` carries cumulative counters and is sampled 4Ã/s with `try_send`, so a slow
   front end never stalls the engine; `run()` returns the `JobReport` instead of a final event.
 - `ReportOptions` has only `csv`/`txt` until M2 adds `mhl`/`pdf`; `JobSpec.folder` is a plain
   `/`-separated name until M3 adds templates.
@@ -717,15 +725,15 @@ Done when:
   gets a new device number) and the recorded device number is refreshed. macOS matches by
   volume UUID too since M4.
 - Resume re-verifies every file already at its final path (added after M1 review: a file
-  corrupted after verification with size and mtime intact must be caught —
+  corrupted after verification with size and mtime intact must be caught â
   `resume_catches_corruption_after_verification`).
 - Linux `fuseblk` mounts (ntfs-3g, exfat-fuse) get Windows naming rules.
-- Not in M1: stall detection for a destination whose writes hang in the kernel — moved to M2
+- Not in M1: stall detection for a destination whose writes hang in the kernel â moved to M2
   (minimal watchdog) after review; the full progress view stays in M4.
 - `shortend-core` has a test-only `fault-injection` feature (`SHORTEND_FAULT=corrupt-dest=N`);
   it is enabled only for tests and is absent from release builds.
 
-### M2 — MHL + PDF reports
+### M2 â MHL + PDF reports
 
 Scope: ASC MHL v2 writer (generations, chain file, directory hashes, ignore list), v1.1 writer,
 streaming readers for both; carry-forward of an existing source history; `shortend verify
@@ -765,10 +773,10 @@ Done when:
       check in CI), and includes logo and Unicode filenames correctly. *Checked with
       poppler (`pdftotext`, `pdfinfo`, `pdfimages`) and `qpdf --check`. Latin, Greek and
       Cyrillic names render; scripts the embedded font lacks (e.g. CJK) appear as
-      `[U+XXXX]` — see notes.*
+      `[U+XXXX]` â see notes.*
 
 **M2 implementation notes** (deviations and decisions):
-- `shortend verify` is read-only, like the reference `ascmhl-debug verify` (§5.3 said it
+- `shortend verify` is read-only, like the reference `ascmhl-debug verify` (Â§5.3 said it
   would append a generation; the reference tool's verify does not, and a read-only check is
   safer to run on a delivery drive). It verifies an ASC MHL history, or every `.mhl` v1.1
   file in the folder.
@@ -790,7 +798,7 @@ Done when:
   once ShortEnd has extended it, so it is not re-copied when the journal records that a
   manifest was written there. A new generation is written only if the run copied something.
 - Several manifests per job: `reports.mhl` is a list (`--mhl v2,v1.1`); v2 is the default.
-  ASC MHL v2 lists zero-byte files. MHL v1.1 cannot (its schema requires `size ≥ 1`), so
+  ASC MHL v2 lists zero-byte files. MHL v1.1 cannot (its schema requires `size â¥ 1`), so
   the omission is loud: a manifest issue in the summary, job state `CompletedWithFailures`
   (exit 1), and the omitted files named in the CSV (detail column), TXT and PDF reports. A
   job with v1.1 as its *only* manifest and zero-byte files on the card is refused at
@@ -802,7 +810,7 @@ Done when:
   pages, rendered in ~1 s in release builds). CJK and other
   scripts DejaVu lacks are shown as `[U+XXXX]` rather than altered; exact names stay in
   CSV/TXT/MHL. Candidate for M6: an optional system fallback font.
-- Stall watchdog coverage: the watchdog runs from job start until cleanup — destination
+- Stall watchdog coverage: the watchdog runs from job start until cleanup â destination
   setup (folder creation, staging), resume's re-verification pass, the copy, and manifest/
   report writing. Per-destination setup and re-check run on detached threads, so one hung
   drive is dropped (`DestinationStalled`) while the others continue. Tested with injected
@@ -817,7 +825,7 @@ Done when:
 - Windows: canonical paths are reported without the `\\?\` prefix (it broke external tools
   and was unreadable in reports).
 
-### M3 — Presets and naming templates
+### M3 â Presets and naming templates
 
 Scope: template parser/expander, sanitization, `{seq}` allocation; preset TOML load/save/
 validate; CLI `--preset <file|name>` with flag overrides; `shortend preset new|show|list`.
@@ -835,7 +843,7 @@ Done when:
       provisional 005) run concurrently and get 005 and 006 on both destinations; plus a
       12-thread claim stress test over overlapping destination sets; resume keeps the folder.*
 - [x] Preset round-trip and rejection tests pass; an example preset ships in `examples/`.
-      *Round trip (load → save → load) incl. `{camrol}` → `{camroll}`; 19 rejection cases;
+      *Round trip (load â save â load) incl. `{camrol}` â `{camroll}`; 19 rejection cases;
       CLI `preset new|show|list`, `--from`, `--force`, invalid presets listed and refused;
       a preset with three checksums and both manifests drives a copy end to end.*
 
@@ -847,13 +855,13 @@ Done when:
   relative to the preset file.
 - `[production] day` is the shoot day (`shoot_day` is still read, for job files written by M1/M2).
 
-### M4 — GUI (egui)
+### M4 â GUI (egui)
 
-Scope: `shortend-gui` with four views — **Offload** (source picker, destinations, preset
+Scope: `shortend-gui` with four views â **Offload** (source picker, destinations, preset
 picker, production fields, preflight results shown inline before Start), **Progress**
 (per-destination bars and speeds, current file, failures, Cancel), **History** (jobs from the
 state dir, open reports, Resume), **Presets** (edit/save). The engine runs on a worker thread;
-the GUI only consumes `Event`s and calls the public API — no GUI types or crates in
+the GUI only consumes `Event`s and calls the public API â no GUI types or crates in
 `shortend-core`.
 
 **Blocker carried from M1 (fixed):** on macOS, volumes were identified by device number only,
@@ -869,15 +877,15 @@ Done when:
 - [x] `shortend-core` has no dependency on any GUI crate (checked in CI with `cargo tree`).
 - [x] A full offload, cancel, and resume can be done from the GUI on Linux (X11 and Wayland),
       macOS and Windows (manual checklist recorded in `docs/qa.md`). *Automated on all three
-      OSes by `shortend-gui/tests/gui.rs` (egui_kittest drives the real widgets: Check →
-      Start → Cancel → History → Resume → PASS, files identical); the real window is
+      OSes by `shortend-gui/tests/gui.rs` (egui_kittest drives the real widgets: Check â
+      Start â Cancel â History â Resume â PASS, files identical); the real window is
       smoke-tested in CI on X11 (Xvfb) and Wayland (headless weston). The manual checklist
       (native dialogs, drag and drop, real drive pulls, HiDPI) is run per release.*
-- [x] UI stays responsive (≥30 fps) during a 10k-file job and while a destination is stalled.
+- [x] UI stays responsive (â¥30 fps) during a 10k-file job and while a destination is stalled.
       *`tests/responsive.rs`: p95 frame < 33 ms and no frame > 200 ms through a 10,000-file
       job with one destination hung until the watchdog drops it (measured 3.5 ms p95).*
 - [x] Idle GUI with no job: <1% CPU, no continuous repaint. *The test checks the UI settles in
-      ≤3 frames with no repaint pending; the release build used 0 CPU ticks in 10 s.*
+      â¤3 frames with no repaint pending; the release build used 0 CPU ticks in 10 s.*
 
 **M4 implementation notes:**
 - `shortend-gui` (eframe 0.33, glow; rfd for native dialogs) is a library plus a thin binary,
@@ -892,11 +900,11 @@ Done when:
   generation could leave a generation the chain doesn't list, which the resumed job then
   refused. Manifest writes are journaled first; resume keeps a generation whose chain entry
   landed and removes an orphan otherwise (`tests/mhl.rs`, four crash points).
-- Known gaps: without an XDG desktop portal, Browse… does nothing (type the path); egui's
+- Known gaps: without an XDG desktop portal, Browseâ¦ does nothing (type the path); egui's
   fonts lack CJK glyphs (names are exact in reports and manifests); on X11 the window needs
   `libxkbcommon-x11` (present on desktop installs; packaging in M6 must depend on it).
 
-### M5 — Format awareness + thumbnails
+### M5 â Format awareness + thumbnails
 
 Scope: detection, clip grouping, ffprobe metadata, ffmpeg I-frame thumbnails from destination
 copies, PDF clip section, graceful degradation.
@@ -910,7 +918,7 @@ Done when:
       PDF has placeholders and a warning, no crash, timeout respected.
 - [ ] Frame sequences collapse to ranges in the PDF clip section.
 
-### M6 — Polish, packaging, CI
+### M6 â Polish, packaging, CI
 
 Scope: benchmarks and default tuning (`parallel_files`, `chunk_size`, pool depth) on NVMe,
 USB HDD, and NAS; release workflow; packaging:
@@ -920,11 +928,11 @@ USB HDD, and NAS; release workflow; packaging:
   compatibility. A fully static GUI is not possible: egui/winit `dlopen` libGL/Wayland/X11,
   which musl static binaries cannot do. Runtime libraries the GUI loads on demand must be
   bundled or declared: libGL/libEGL (Mesa), libxkbcommon and libxkbcommon-x11 (X11; without
-  it the window panics at startup — found by the M4 CI smoke test), libwayland-client.
+  it the window panics at startup â found by the M4 CI smoke test), libwayland-client.
   ffmpeg is not bundled (size/licensing); it is used if
   found on `PATH` or configured.
 - **macOS:** universal `.dmg` (app bundle + CLI). Signing/notarization needs an Apple
-  Developer account — wired up but conditional on secrets.
+  Developer account â wired up but conditional on secrets.
 - **Windows:** `.zip` and an `.msi` via `cargo-wix`.
 
 Done when:
@@ -946,14 +954,14 @@ Done when:
 | Read-back verification hits cache on network filesystems | Stated per destination in reports; no false claims. |
 | CI runners lack `scsi_debug` / limit device-mapper | `dm-error` is the primary unplug test (available on GitHub Ubuntu runners with sudo); physical pulls are a release-gate checklist. |
 | exFAT/NTFS drivers on Linux vary (kernel `ntfs3` vs FUSE `ntfs-3g`) | Tested explicitly on loop devices; `rename_noreplace` fallback covers missing `RENAME_NOREPLACE`. |
-| Very large cards (≥100k files) inflate PDF size | Clip-level grouping in M5; full per-file detail remains in CSV/MHL. |
+| Very large cards (â¥100k files) inflate PDF size | Clip-level grouping in M5; full per-file detail remains in CSV/MHL. |
 
 ---
 
 ## 11. Decisions (resolved 2026-10-10)
 
 1. **Resume granularity:** per file; interrupted files restart from byte 0. Files already
-   fully copied and verified are skipped, never re-copied (§4.6 skip rule).
+   fully copied and verified are skipped, never re-copied (Â§4.6 skip rule).
 2. **Checksums:** one algorithm per job by default. The hashing layer (`HashList`,
    `MultiHasher`, `Digests`) computes several algorithms in a single read pass and the data
    model, journal and reports carry all of them; multiple algorithms become an explicit
